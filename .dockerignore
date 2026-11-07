@@ -1,0 +1,26 @@
+# Secrets and runtime data must never enter the image
+.env
+.env.*
+!.env.example
+db/
+
+# Regenerated in the build
+**/node_modules
+**/.next
+**/out
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.coverage
+frontend/next-env.d.ts
+frontend/*.tsbuildinfo
+backend/static
+
+# Not needed by the app
+.git
+.github
+.claude
+planning
+test
+scripts
+backend/tests
