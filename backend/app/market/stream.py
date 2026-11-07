@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Request
@@ -14,14 +15,17 @@ from .cache import PriceCache
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/stream", tags=["streaming"])
 
-
-def create_stream_router(price_cache: PriceCache) -> APIRouter:
+def create_stream_router(
+    price_cache: PriceCache, stop: threading.Event | None = None
+) -> APIRouter:
     """Create the SSE streaming router with a reference to the price cache.
 
     This factory pattern lets us inject the PriceCache without globals.
+    Setting stop ends every open stream, which a server shutdown relies on.
     """
+    stop = stop or threading.Event()
+    router = APIRouter(prefix="/api/stream", tags=["streaming"])
 
     @router.get("/prices")
     async def stream_prices(request: Request) -> StreamingResponse:
@@ -36,7 +40,7 @@ def create_stream_router(price_cache: PriceCache) -> APIRouter:
         disconnection (EventSource built-in behavior).
         """
         return StreamingResponse(
-            _generate_events(price_cache, request),
+            _generate_events(price_cache, request, stop=stop),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -52,12 +56,15 @@ async def _generate_events(
     price_cache: PriceCache,
     request: Request,
     interval: float = 0.5,
+    stop: threading.Event | None = None,
 ) -> AsyncGenerator[str, None]:
     """Async generator that yields SSE-formatted price events.
 
     Sends all prices every `interval` seconds. Stops when the client
-    disconnects (detected via request.is_disconnected()).
+    disconnects (detected via request.is_disconnected()) or stop is set.
     """
+    stop = stop or threading.Event()
+
     # Tell the client to retry after 1 second if the connection drops
     yield "retry: 1000\n\n"
 
@@ -66,7 +73,7 @@ async def _generate_events(
     logger.info("SSE client connected: %s", client_ip)
 
     try:
-        while True:
+        while not stop.is_set():
             # Check for client disconnect
             if await request.is_disconnected():
                 logger.info("SSE client disconnected: %s", client_ip)

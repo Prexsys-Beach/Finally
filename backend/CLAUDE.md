@@ -7,29 +7,56 @@ cd backend
 uv sync --extra dev   # Install all dependencies including test/lint tools
 ```
 
+## Running the Server
+
+```bash
+uv run --env-file ../.env uvicorn app.main:app --port 8000
+```
+
+API docs are at `http://localhost:8000/docs`. The database is created and seeded on first start.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FINALLY_DB_PATH` | `db/finally.db` in the project root | SQLite file |
+| `FINALLY_STATIC_DIR` | `backend/static` | Frontend build, served at `/` if present |
+
+## Application Layout
+
+- `app/main.py` — `create_app()`, startup and shutdown
+- `app/db/` — schema, connections, `transaction()`, seed data (the package lives here rather than `backend/db/` so it ships in the wheel)
+- `app/portfolio.py` — valuation, trades, snapshots. Use `place_trade()` for every trade, including LLM trades, so validation and ticker tracking stay in one place
+- `app/watchlist.py` — watchlist rules, plus `tracked_tickers()` and `release_ticker()`
+- `app/chat.py` — LLM chat. Auto-executes through `place_trade()` and the watchlist functions. Set `LLM_MOCK=true` for deterministic replies: `buy 5 AAPL`, `sell 1 MSFT`, `add PYPL`, `remove NFLX`
+- `app/routes/` — HTTP layer only
+
+Routes are `async` and call SQLite directly on the event loop. Queries are small and local, so this is fine for a single user, and it serializes writes.
+
 ## Market Data API
 
 The market data subsystem lives in `app/market/`. Use these imports:
 
 ```python
-from app.market import PriceCache, PriceUpdate, MarketDataSource, create_market_data_source
+from app.market import PriceCache, PriceUpdate, MarketDataSource, DataMode
+from app.market import create_market_data_source, normalize_ticker
 ```
 
 ### Core Types
 
-- **`PriceUpdate`** — Immutable dataclass: `ticker`, `price`, `previous_price`, `timestamp`, plus properties `change`, `change_percent`, `direction` ("up"/"down"/"flat"), and `to_dict()` for JSON serialization.
+- **`PriceUpdate`** — Immutable dataclass: `ticker`, `price`, `previous_price`, `timestamp`, `previous_close`, plus properties `change`, `change_percent`, `direction` ("up"/"down"/"flat"), `day_change_percent`, and `to_dict()` for JSON serialization. `change` and `change_percent` are tick-to-tick; use `day_change_percent` for daily change.
 
 - **`PriceCache`** — Thread-safe in-memory store. Key methods:
-  - `update(ticker, price, timestamp=None) -> PriceUpdate`
+  - `update(ticker, price, timestamp=None, previous_close=None) -> PriceUpdate` (`None` keeps the existing `previous_close`)
   - `get(ticker) -> PriceUpdate | None`
   - `get_price(ticker) -> float | None`
   - `get_all() -> dict[str, PriceUpdate]`
   - `remove(ticker)`
   - `version` property — monotonic counter, increments on every update (for SSE change detection)
 
-- **`MarketDataSource`** — Abstract interface implemented by `SimulatorDataSource` and `MassiveDataSource`. Lifecycle: `start(tickers)` -> `add_ticker()` / `remove_ticker()` -> `stop()`.
+- **`MarketDataSource`** — Abstract interface implemented by `SimulatorDataSource` and `MassiveDataSource`. Lifecycle: `start(tickers)` -> `add_ticker()` / `remove_ticker()` -> `stop()`. The `mode` property is `"simulated"`, `"live"` or `"eod"`.
 
-- **`create_market_data_source(cache)`** — Factory. Returns `MassiveDataSource` if `MASSIVE_API_KEY` is set, otherwise `SimulatorDataSource`.
+- **`create_market_data_source(cache)`** — Factory. Returns `MassiveDataSource` if `MASSIVE_API_KEY` is set, otherwise `SimulatorDataSource`. `MASSIVE_POLL_INTERVAL` sets the Massive poll seconds (default 15).
+
+Prices can be `None`, for example just after startup, so handle that. Follow the "Integration Rules" in `planning/MARKET_INTERFACE.md`, especially tracking watchlist and open positions together. In Massive tests, build snapshots from real models rather than `MagicMock`.
 
 ### SSE Streaming
 

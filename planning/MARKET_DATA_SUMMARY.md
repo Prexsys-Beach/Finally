@@ -1,17 +1,19 @@
 # Market Data Backend — Summary
 
-**Status:** Complete, tested, reviewed, all issues resolved.
+**Status:** Complete. The simulator is ready for use. Massive's end-of-day mode has been run with a real key. Massive's `live` mode is tested only against the real client with faked HTTP, because the available key has no snapshot access.
+
+The original review missed two defects that stopped Massive working at all, because `MagicMock` fixtures hid them. Both were fixed on 2026-11-06. See "Massive Fixes" below.
 
 ## What Was Built
 
-A complete market data subsystem in `backend/app/market/` (8 modules, ~500 lines) providing live price simulation and real market data via a unified interface.
+A complete market data subsystem in `backend/app/market/` (8 modules) providing live price simulation and real market data via a unified interface.
 
 ### Architecture
 
 ```
 MarketDataSource (ABC)
 ├── SimulatorDataSource  →  GBM simulator (default, no API key needed)
-└── MassiveDataSource    →  Polygon.io REST poller (when MASSIVE_API_KEY set)
+└── MassiveDataSource    →  Massive REST poller (when MASSIVE_API_KEY set)
         │
         ▼
    PriceCache (thread-safe, in-memory)
@@ -25,13 +27,13 @@ MarketDataSource (ABC)
 
 | File | Purpose |
 |------|---------|
-| `models.py` | `PriceUpdate` — immutable frozen dataclass (ticker, price, previous_price, timestamp, change, direction) |
-| `interface.py` | `MarketDataSource` — abstract base class defining `start/stop/add_ticker/remove_ticker/get_tickers` |
+| `models.py` | `PriceUpdate` — immutable frozen dataclass (ticker, price, previous_price, timestamp, previous_close, change, direction, day_change_percent) |
+| `interface.py` | `MarketDataSource` — abstract base class defining `start/stop/add_ticker/remove_ticker/get_tickers/mode`, plus `normalize_ticker()` |
 | `cache.py` | `PriceCache` — thread-safe price store with version counter for SSE change detection |
 | `seed_prices.py` | Realistic seed prices, per-ticker GBM params (drift/volatility), correlation groups |
 | `simulator.py` | `GBMSimulator` (Geometric Brownian Motion with Cholesky-correlated moves) + `SimulatorDataSource` |
-| `massive_client.py` | `MassiveDataSource` — REST polling client for Polygon.io via the `massive` package |
-| `factory.py` | `create_market_data_source()` — selects simulator or Massive based on `MASSIVE_API_KEY` env var |
+| `massive_client.py` | `MassiveDataSource` — REST poller via the `massive` package: snapshots, or end-of-day closes if the plan has no snapshot access |
+| `factory.py` | `create_market_data_source()` — selects simulator or Massive based on `MASSIVE_API_KEY`; reads `MASSIVE_POLL_INTERVAL` |
 | `stream.py` | `create_stream_router()` — FastAPI SSE endpoint factory using version-based change detection |
 
 ### Key Design Decisions
@@ -44,18 +46,19 @@ MarketDataSource (ABC)
 
 ## Test Suite
 
-**73 tests, all passing.** 6 test modules in `backend/tests/market/`.
+**92 tests, all passing** on `massive` 2.2.0 and 2.9.1. 7 test modules in `backend/tests/market/`.
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
 | test_models.py | 11 | models.py: 100% |
 | test_cache.py | 13 | cache.py: 100% |
-| test_simulator.py | 17 | simulator.py: 98% |
+| test_simulator.py | 19 | simulator.py: 98% |
 | test_simulator_source.py | 10 | (integration tests) |
 | test_factory.py | 7 | factory.py: 100% |
-| test_massive.py | 13 | massive_client.py: 56% (expected — API methods mocked) |
+| test_massive.py | 13 | massive_client.py: 97% (with the module below) |
+| test_massive_real_models.py | 19 | Real `massive` client and models, with only HTTP faked |
 
-Overall coverage: 84%.
+Overall coverage: 93%. The main gap is `stream.py` at 33%.
 
 ## Code Review & Fixes Applied
 
@@ -68,6 +71,18 @@ A comprehensive code review identified 7 issues. All were resolved:
 5. **Correlation constants cleaned up** — removed unused `DEFAULT_CORR`, consolidated into `CROSS_GROUP_CORR`
 6. **Unused test imports removed** — `pytest`, `math`, `asyncio` cleaned from 4 test files
 7. **Massive test mocks fixed** — `source._client` set in tests, patches target correct names
+
+## Massive Fixes (2026-11-06)
+
+1. **Snapshot URL** — the code passed an Enum where the client needs `"stocks"`, so the live API returned 404
+2. **Trade timestamp** — `last_trade.timestamp` doesn't exist; now `sip_timestamp`, treated as nanoseconds
+3. **Basic plan** — no snapshot access, so a 403 now switches to end-of-day closes (`mode == "eod"`)
+4. **Missing fields** — price falls back from last trade to minute bar, today's bar, then previous close
+5. **Daily change** — added `previous_close` and `day_change_percent`, from both sources
+6. **Smaller fixes** — `retries=0` so a 429 costs one request, removed tickers stay removed, tickers are normalised in both sources
+7. **Tests** — Massive fixtures use real models, because `MagicMock` invents attributes
+
+Before relying on `live` mode, run the smoke test in `MARKET_INTERFACE.md` with a key that has snapshot access.
 
 ## Demo
 
@@ -87,13 +102,14 @@ from app.market import PriceCache, create_market_data_source
 
 # Startup
 cache = PriceCache()
-source = create_market_data_source(cache)  # Reads MASSIVE_API_KEY
+source = create_market_data_source(cache)  # Reads MASSIVE_API_KEY, MASSIVE_POLL_INTERVAL
 await source.start(["AAPL", "GOOGL", "MSFT", ...])
 
 # Read prices
 update = cache.get("AAPL")          # PriceUpdate or None
 price = cache.get_price("AAPL")     # float or None
 all_prices = cache.get_all()        # dict[str, PriceUpdate]
+mode = source.mode                  # "simulated", "live" or "eod"
 
 # Dynamic watchlist
 await source.add_ticker("TSLA")
