@@ -19,7 +19,15 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } },
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1440, height: 900 },
+        // Optional: an already-installed Chrome, for machines that can't download
+        // Playwright's browser (e.g. cloud sessions without Docker)
+        ...(process.env.CHROME_PATH
+          ? { launchOptions: { executablePath: process.env.CHROME_PATH } }
+          : {}),
+      },
     },
   ],
 });
