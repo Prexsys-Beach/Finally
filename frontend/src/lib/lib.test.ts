@@ -1,11 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { formatMoney, formatPercent, formatSignedMoney } from "./format";
+import { formatMoney, formatPercent, formatSignedMoney, trendClass } from "./format";
 import { appendPoint, MAX_POINTS, toSeries } from "./history";
 import { livePortfolio } from "./portfolio";
 import { squarify } from "./treemap";
 import type { Portfolio, PricePoint, PriceUpdate } from "./types";
 
 describe("format", () => {
+  it("never shows a sign or a color on a value that rounds to zero", () => {
+    expect(formatSignedMoney(-0.002)).toBe("$0.00");
+    expect(formatSignedMoney(0.004)).toBe("$0.00");
+    expect(formatPercent(-0.004)).toBe("0.00%");
+    expect(trendClass(-0.002)).toBe("text-muted");
+    expect(trendClass(0.004)).toBe("text-muted");
+  });
+
+  it("keeps the sign and color of the smallest visible value", () => {
+    expect(formatSignedMoney(-0.01)).toBe("−$0.01");
+    expect(formatPercent(0.006)).toBe("+0.01%");
+    expect(trendClass(-0.01)).toBe("text-down");
+  });
+
   it("shows a dash for unknown values", () => {
     expect(formatMoney(null)).toBe("–");
     expect(formatPercent(null)).toBe("–");

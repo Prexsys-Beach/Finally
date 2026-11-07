@@ -181,3 +181,18 @@ class TestTracking:
 
         assert source.get_tickers() == ["AAPL"]
         assert "AAPL" in watchlist.tracked_tickers(conn)
+
+
+class TestQuantityInMessages:
+    @pytest.mark.parametrize(
+        ("quantity", "text"),
+        [
+            (1_000_000, "1,000,000"),
+            (1234.5, "1,234.5"),
+            (0.1, "0.1"),
+            (0.00001, "0.00001"),
+            (5, "5"),
+        ],
+    )
+    def test_reads_as_a_plain_number(self, quantity, text):
+        assert portfolio.format_quantity(quantity) == text

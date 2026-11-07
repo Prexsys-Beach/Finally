@@ -6,7 +6,10 @@ export const formatMoney = (value: number | null) =>
 
 export const formatQuantity = (value: number) => quantity.format(value);
 
-const sign = (value: number) => (value > 0 ? "+" : value < 0 ? "−" : "");
+/** Rounded as displayed, so a sign or color never sits on a value shown as zero. */
+const shown = (value: number) => Math.round(value * 100) / 100;
+
+const sign = (value: number) => (shown(value) > 0 ? "+" : shown(value) < 0 ? "−" : "");
 
 export const formatSignedMoney = (value: number | null) =>
   value === null ? "–" : `${sign(value)}${money.format(Math.abs(value))}`;
@@ -15,4 +18,4 @@ export const formatPercent = (value: number | null) =>
   value === null ? "–" : `${sign(value)}${Math.abs(value).toFixed(2)}%`;
 
 export const trendClass = (value: number | null) =>
-  !value ? "text-muted" : value > 0 ? "text-up" : "text-down";
+  !value || !shown(value) ? "text-muted" : value > 0 ? "text-up" : "text-down";

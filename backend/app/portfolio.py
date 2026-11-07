@@ -23,6 +23,11 @@ SNAPSHOT_INTERVAL_SECONDS = 30.0
 EPSILON = 1e-9  # Tolerance for float dust, e.g. selling a whole fractional position
 
 
+def format_quantity(quantity: float) -> str:
+    """A share count for messages: 1,000,000 or 0.5, never 1e+06."""
+    return f"{quantity:,.6f}".rstrip("0").rstrip(".")
+
+
 class TradeError(Exception):
     """A trade the user can't make, such as one with insufficient cash."""
 
@@ -86,7 +91,7 @@ def execute_trade(
 ) -> dict:
     """Validate and apply a market order at price, atomically."""
     if not math.isfinite(quantity) or quantity <= 0:
-        raise TradeError(f"Invalid quantity for {ticker}: {quantity:g}")
+        raise TradeError(f"Invalid quantity for {ticker}: {format_quantity(quantity)}")
 
     now = utc_now()
     trade = {
@@ -109,7 +114,7 @@ def execute_trade(
         if side == "buy":
             if notional > cash + EPSILON:
                 raise TradeError(
-                    f"Insufficient cash: {quantity:g} {ticker} costs ${notional:,.2f}, "
+                    f"Insufficient cash: {format_quantity(quantity)} {ticker} costs ${notional:,.2f}, "
                     f"available ${cash:,.2f}"
                 )
             new_cash = max(cash - notional, 0.0)
@@ -130,7 +135,8 @@ def execute_trade(
         else:
             if quantity > owned + EPSILON:
                 raise TradeError(
-                    f"Insufficient shares: selling {quantity:g} {ticker}, you own {owned:g}"
+                    f"Insufficient shares: selling {format_quantity(quantity)} {ticker}, "
+                    f"you own {format_quantity(owned)}"
                 )
             new_cash = cash + notional
             remaining = owned - quantity
