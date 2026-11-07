@@ -30,11 +30,20 @@ Single Docker container serving everything on port 8000:
 cp .env.example .env
 # Add your OPENROUTER_API_KEY to .env
 
-# Run with Docker
+# Build if needed, start, and open the browser
+scripts/start_mac.sh            # Windows: scripts\start_windows.ps1
+
+# Stop. Your portfolio is kept in the finally-data Docker volume.
+scripts/stop_mac.sh             # Windows: scripts\stop_windows.ps1
+```
+
+Pass `--build` (Windows: `-Build`) to rebuild after changing the code. To start again from $10,000, stop the app and run `docker volume rm finally-data`.
+
+To run it by hand:
+
+```bash
 docker build -t finally .
 docker run -v finally-data:/app/db -p 8000:8000 --env-file .env finally
-
-# Open http://localhost:8000
 ```
 
 ## Environment Variables
@@ -43,6 +52,8 @@ docker run -v finally-data:/app/db -p 8000:8000 --env-file .env finally
 |---|---|---|
 | `OPENROUTER_API_KEY` | Yes | OpenRouter API key for AI chat |
 | `MASSIVE_API_KEY` | No | Massive (Polygon.io) key for real market data; omit to use simulator |
+| `MASSIVE_SEED_SIMULATOR` | No | `true` with a Massive key starts the simulator from real closes |
+| `MASSIVE_POLL_INTERVAL` | No | Seconds between Massive polls; default 15 |
 | `LLM_MOCK` | No | Set `true` for deterministic mock LLM responses (testing) |
 
 ## Project Structure

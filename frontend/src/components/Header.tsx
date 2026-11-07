@@ -9,6 +9,7 @@ const CONNECTION: Record<ConnectionStatus, { label: string; color: string }> = {
 
 const MODE: Record<DataMode, string> = {
   simulated: "Simulated prices",
+  seeded: "Simulated from last close",
   live: "Market data",
   eod: "End-of-day closes",
 };

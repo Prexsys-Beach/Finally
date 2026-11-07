@@ -98,6 +98,17 @@ All of these live in `seed_prices.py`.
 | NFLX | $600 | 0.35 | 0.05 | |
 | Any other | Random $50–$300 | 0.25 | 0.05 | `DEFAULT_PARAMS` |
 
+## Starting From Real Closes
+
+With a Massive key and `MASSIVE_SEED_SIMULATOR=true`, the simulator starts from real prices instead of the seed table, and the source reports mode `seeded`. This works on the free plan.
+
+- `DailyCloses` in `massive_client.py` loads the two latest sessions from the grouped daily endpoint. One call covers the whole market, so adding a ticker needs no request unless the data is over an hour old.
+- A ticker starts at its last close, and its daily change is measured from the close before it.
+- A ticker with no close stays unpriced, so a typo can't become a tradable fake stock.
+- If no closes load, the default tickers use the seed table and the mode stays `simulated`. Startup waits at most 20 seconds for closes.
+
+Prices after the start are still simulated.
+
 ## Code Structure
 
 ```
@@ -221,7 +232,7 @@ This suits a demo of a few minutes, where drama is the goal. It's the main thing
 
 - **Daily change has no real day.** There's no session boundary, so "daily change" means change since the app started.
 - **Prices restart on each launch.** Nothing is saved, so a position bought at a drifted price will show an immediate gain or loss after a restart, because the ticker has returned to its seed price.
-- **New tickers get a random price.** An unknown ticker starts between $50 and $300, and the price differs each time it's added.
+- **New tickers get a random price without real closes.** An unknown ticker starts between $50 and $300, and the price differs each time it's added. `MASSIVE_SEED_SIMULATOR=true` avoids this (see below).
 - **Results aren't reproducible.** The code uses the global `random` and `np.random` state. Tests should assert properties, or set both seeds.
 - **Correlation is approximate.** Shocks are independent, so a ticker's correlation with others weakens over a long run with events.
 - **Comment drift.** A comment in `_pairwise_correlation` says TSLA is in the tech set, but it isn't. `TSLA_CORR` and `CROSS_GROUP_CORR` are both 0.3, so the TSLA branch changes nothing unless they diverge.

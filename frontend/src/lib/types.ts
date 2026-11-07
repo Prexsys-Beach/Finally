@@ -1,7 +1,7 @@
 export type Direction = "up" | "down" | "flat";
 export type Side = "buy" | "sell";
 export type ConnectionStatus = "connected" | "reconnecting" | "disconnected";
-export type DataMode = "simulated" | "live" | "eod";
+export type DataMode = "simulated" | "seeded" | "live" | "eod";
 
 export interface PriceUpdate {
   ticker: string;

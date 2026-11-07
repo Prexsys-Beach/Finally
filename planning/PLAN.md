@@ -128,6 +128,9 @@ OPENROUTER_API_KEY=your-openrouter-api-key-here
 # If not set, the built-in market simulator is used (recommended for most users)
 MASSIVE_API_KEY=
 
+# Optional: Set to "true" with a Massive key to start the simulator from real closes
+MASSIVE_SEED_SIMULATOR=false
+
 # Optional: Seconds between Massive polls (default 15; 2-5 suits real-time paid plans)
 MASSIVE_POLL_INTERVAL=
 
@@ -137,7 +140,8 @@ LLM_MOCK=false
 
 ### Behavior
 
-- If `MASSIVE_API_KEY` is set and non-empty → backend uses Massive REST API for market data
+- If `MASSIVE_API_KEY` is set and `MASSIVE_SEED_SIMULATOR=true` → backend simulates prices starting from real Massive closes
+- If `MASSIVE_API_KEY` is set and non-empty otherwise → backend uses Massive REST API for market data
 - If `MASSIVE_API_KEY` is absent or empty → backend uses the built-in market simulator
 - If `LLM_MOCK=true` → backend returns deterministic mock LLM responses (for E2E tests)
 - The backend reads `.env` from the project root (mounted into the container or read via docker `--env-file`)

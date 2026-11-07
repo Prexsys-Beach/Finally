@@ -1,0 +1,14 @@
+# Optional wrapper around the same image: docker compose up --build
+services:
+  finally:
+    build: .
+    container_name: finally
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - finally-data:/app/db
+    restart: unless-stopped
+
+volumes:
+  finally-data:
