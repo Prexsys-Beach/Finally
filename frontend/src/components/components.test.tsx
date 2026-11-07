@@ -6,7 +6,7 @@ import type { Portfolio, PriceUpdate, WatchlistEntry } from "@/lib/types";
 import { useMarket } from "@/lib/useMarket";
 import { ChatPanel, Message } from "./ChatPanel";
 import { Header } from "./Header";
-import { Heatmap, tileColor } from "./Heatmap";
+import { Heatmap, tileColor, tileContent } from "./Heatmap";
 import { PositionsTable } from "./PositionsTable";
 import { TradeBar } from "./TradeBar";
 import { Watchlist, WatchlistRow } from "./Watchlist";
@@ -206,6 +206,25 @@ describe("Heatmap", () => {
     expect(screen.getByTestId("heatmap-tile-cash")).toHaveTextContent("Cash");
     expect(screen.getByTestId("heatmap-tile-AAPL")).toHaveTextContent("+10.00%");
     vi.unstubAllGlobals();
+  });
+});
+
+describe("tileContent", () => {
+  it("stacks the label and value in a large tile", () => {
+    expect(tileContent("JPM", "+0.03%", 200, 100)).toBe("stacked");
+  });
+
+  it("keeps the value on one line in a short tile", () => {
+    expect(tileContent("JPM", "+0.03%", 200, 40)).toBe("inline");
+  });
+
+  it("drops the value when only the label fits", () => {
+    expect(tileContent("JPM", "+0.03%", 60, 40)).toBe("label");
+  });
+
+  it("shows nothing in a tile too small for text", () => {
+    expect(tileContent("JPM", "+0.03%", 20, 100)).toBe("none");
+    expect(tileContent("JPM", "+0.03%", 200, 20)).toBe("none");
   });
 });
 

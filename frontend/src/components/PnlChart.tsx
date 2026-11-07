@@ -1,6 +1,6 @@
 "use client";
 
-import { AreaSeries, createChart, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
+import { AreaSeries, createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { useEffect, useRef } from "react";
 import { toSeries } from "@/lib/history";
 import type { Snapshot } from "@/lib/types";
@@ -8,11 +8,13 @@ import { chartOptions } from "./chartOptions";
 
 export function PnlChart({ snapshots }: { snapshots: Snapshot[] }) {
   const container = useRef<HTMLDivElement>(null);
+  const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Area"> | null>(null);
 
   useEffect(() => {
     if (!container.current) return;
     const created = createChart(container.current, chartOptions);
+    chart.current = created;
     series.current = created.addSeries(AreaSeries, {
       lineColor: "#209dd7",
       lineWidth: 2,
@@ -22,6 +24,7 @@ export function PnlChart({ snapshots }: { snapshots: Snapshot[] }) {
     });
     return () => {
       created.remove();
+      chart.current = null;
       series.current = null;
     };
   }, []);
@@ -38,6 +41,11 @@ export function PnlChart({ snapshots }: { snapshots: Snapshot[] }) {
       points.map((point) => ({ time: point.time as UTCTimestamp, value: point.value })),
     );
   }, [snapshots]);
+
+  // Only on a new point, so the regular refresh doesn't undo a user's zoom
+  useEffect(() => {
+    chart.current?.timeScale().fitContent();
+  }, [points.length]);
 
   return (
     <section aria-label="Portfolio value over time" className="flex min-h-56 min-w-0 flex-col border-line xl:border-l">
