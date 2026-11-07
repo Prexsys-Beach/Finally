@@ -7,6 +7,30 @@ cd backend
 uv sync --extra dev   # Install all dependencies including test/lint tools
 ```
 
+## Running the Server
+
+```bash
+uv run --env-file ../.env uvicorn app.main:app --port 8000
+```
+
+API docs are at `http://localhost:8000/docs`. The database is created and seeded on first start.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FINALLY_DB_PATH` | `db/finally.db` in the project root | SQLite file |
+| `FINALLY_STATIC_DIR` | `backend/static` | Frontend build, served at `/` if present |
+
+## Application Layout
+
+- `app/main.py` — `create_app()`, startup and shutdown
+- `app/db/` — schema, connections, `transaction()`, seed data (the package lives here rather than `backend/db/` so it ships in the wheel)
+- `app/portfolio.py` — valuation, trades, snapshots. Use `place_trade()` for every trade, including LLM trades, so validation and ticker tracking stay in one place
+- `app/watchlist.py` — watchlist rules, plus `tracked_tickers()` and `release_ticker()`
+- `app/chat.py` — LLM chat. Auto-executes through `place_trade()` and the watchlist functions. Set `LLM_MOCK=true` for deterministic replies: `buy 5 AAPL`, `sell 1 MSFT`, `add PYPL`, `remove NFLX`
+- `app/routes/` — HTTP layer only
+
+Routes are `async` and call SQLite directly on the event loop. Queries are small and local, so this is fine for a single user, and it serializes writes.
+
 ## Market Data API
 
 The market data subsystem lives in `app/market/`. Use these imports:

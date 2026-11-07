@@ -277,6 +277,7 @@ All tables include a `user_id` column defaulting to `"default"`. This is hardcod
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/chat` | Send a message, receive complete JSON response (message + executed actions) |
+| GET | `/api/chat` | Recent conversation, so the chat panel survives a page refresh |
 
 ### System
 | Method | Path | Description |
