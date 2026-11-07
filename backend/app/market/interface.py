@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Literal
 
-DataMode = Literal["simulated", "live", "eod"]
+DataMode = Literal["simulated", "seeded", "live", "eod"]
 
 
 def normalize_ticker(ticker: str) -> str:

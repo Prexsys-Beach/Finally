@@ -7,7 +7,7 @@ import os
 
 from .cache import PriceCache
 from .interface import MarketDataSource
-from .massive_client import MassiveDataSource
+from .massive_client import DailyCloses, MassiveDataSource
 from .simulator import SimulatorDataSource
 
 logger = logging.getLogger(__name__)
@@ -29,14 +29,21 @@ def _poll_interval() -> float:
 def create_market_data_source(price_cache: PriceCache) -> MarketDataSource:
     """Create the appropriate market data source based on environment variables.
 
-    - MASSIVE_API_KEY set and non-empty → MassiveDataSource (real market data)
+    - MASSIVE_API_KEY set and MASSIVE_SEED_SIMULATOR=true → SimulatorDataSource
+      starting from real closes
+    - MASSIVE_API_KEY set → MassiveDataSource (real market data)
     - Otherwise → SimulatorDataSource (GBM simulation)
 
     Returns an unstarted source. Caller must await source.start(tickers).
     """
     api_key = os.environ.get("MASSIVE_API_KEY", "").strip()
 
-    if api_key:
+    seed_simulator = os.environ.get("MASSIVE_SEED_SIMULATOR", "").strip().lower() == "true"
+
+    if api_key and seed_simulator:
+        logger.info("Market data source: GBM Simulator from real Massive closes")
+        return SimulatorDataSource(price_cache=price_cache, closes=DailyCloses(api_key))
+    elif api_key:
         logger.info("Market data source: Massive API (real data)")
         return MassiveDataSource(
             api_key=api_key,

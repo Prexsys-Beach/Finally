@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 
 from massive import RESTClient
@@ -18,6 +20,10 @@ logger = logging.getLogger(__name__)
 EOD_REFRESH_SECONDS = 3600.0  # End-of-day data changes once a day
 EOD_LOOKBACK_DAYS = 10  # Far enough to cross any US market holiday run
 EOD_CALL_SPACING_SECONDS = 12.5  # Stays within 5 requests/minute
+CLOSES_RETRY_SECONDS = 60.0  # Wait after a failed load, so a bad spell costs few calls
+CLOSES_LOAD_TIMEOUT_SECONDS = 20.0  # Startup waits on this, so it must stay short
+
+DailyClose = tuple[float, float | None, float]  # close, previous close, timestamp
 
 
 def _positive(value: float | None) -> float | None:
@@ -56,6 +62,94 @@ def _is_plan_limit(error: BadResponse) -> bool:
     return "NOT_AUTHORIZED" in str(error)
 
 
+async def _fetch_grouped_day(client: RESTClient, day: date) -> list[GroupedDailyAgg]:
+    """Bars for one date; empty if it is a holiday or too recent for the plan."""
+    try:
+        return await asyncio.to_thread(
+            client.get_grouped_daily_aggs, day.isoformat(), adjusted=True
+        )
+    except BadResponse as e:
+        if _is_plan_limit(e):
+            return []
+        raise
+
+
+async def _latest_sessions(client: RESTClient, spacing: float) -> list[list[GroupedDailyAgg]]:
+    """Walk back from today to the two most recent sessions with data.
+
+    A failure after the first session keeps it: a close is useful without the
+    previous one, which only feeds the daily change.
+    """
+    sessions: list[list[GroupedDailyAgg]] = []
+    today = datetime.now(UTC).date()
+    for offset in range(EOD_LOOKBACK_DAYS):
+        day = today - timedelta(days=offset)
+        if day.weekday() >= 5:
+            continue
+        try:
+            bars = await _fetch_grouped_day(client, day)
+        except Exception as e:
+            if not sessions:
+                raise
+            logger.warning("Massive: kept the latest session, older one failed: %s", e)
+            break
+        if bars:
+            sessions.append(bars)
+        if len(sessions) == 2:
+            break
+        await asyncio.sleep(spacing)
+    return sessions
+
+
+def _closes_by_ticker(sessions: Sequence[list[GroupedDailyAgg]]) -> dict[str, DailyClose]:
+    if not sessions:
+        return {}
+    previous = {b.ticker: b.close for b in sessions[1]} if len(sessions) > 1 else {}
+    return {
+        bar.ticker: (bar.close, previous.get(bar.ticker), bar.timestamp / 1e3)
+        for bar in sessions[0]
+        if _positive(bar.close) and bar.timestamp
+    }
+
+
+class DailyCloses:
+    """The latest real close of every US stock, kept in memory.
+
+    One grouped call covers the whole market, so adding a ticker costs no request
+    until the data is due for a refresh.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        refresh_seconds: float = EOD_REFRESH_SECONDS,
+        timeout: float = CLOSES_LOAD_TIMEOUT_SECONDS,
+    ) -> None:
+        self._client = RESTClient(api_key=api_key, retries=0)
+        self._refresh_seconds = refresh_seconds
+        self._timeout = timeout
+        self._closes: dict[str, DailyClose] = {}
+        self._next_load = 0.0
+
+    async def load(self) -> dict[str, DailyClose]:
+        """Current closes, fetched if due. Keeps the last good set if a fetch fails."""
+        if time.monotonic() < self._next_load:
+            return self._closes
+        try:
+            sessions = await asyncio.wait_for(
+                _latest_sessions(self._client, spacing=0), self._timeout
+            )
+            closes = _closes_by_ticker(sessions)
+        except Exception as e:
+            logger.warning("Massive: could not load real closes: %r", e)
+            closes = {}
+        if closes:
+            self._closes = closes
+        delay = self._refresh_seconds if closes else CLOSES_RETRY_SECONDS
+        self._next_load = time.monotonic() + delay
+        return self._closes
+
+
 class MassiveDataSource(MarketDataSource):
     """MarketDataSource backed by the Massive REST API.
 
@@ -80,7 +174,7 @@ class MassiveDataSource(MarketDataSource):
         self._client: RESTClient | None = None
         self._mode: DataMode = "live"
         self._eod_attempted = False
-        self._eod_bars: dict[str, tuple[float, float | None, float]] = {}
+        self._eod_bars: dict[str, DailyClose] = {}
 
     @property
     def mode(self) -> DataMode:
@@ -179,16 +273,11 @@ class MassiveDataSource(MarketDataSource):
         return self._client.get_snapshot_all("stocks", tickers)
 
     async def _poll_eod(self) -> None:
-        sessions = await self._latest_sessions()
+        sessions = await _latest_sessions(self._client, self._eod_call_spacing)
         if not sessions:
             logger.error("Massive: no daily bars in the last %d days", EOD_LOOKBACK_DAYS)
             return
-        previous = {b.ticker: b.close for b in sessions[1]} if len(sessions) > 1 else {}
-        self._eod_bars = {
-            bar.ticker: (bar.close, previous.get(bar.ticker), bar.timestamp / 1e3)
-            for bar in sessions[0]
-            if _positive(bar.close) and bar.timestamp
-        }
+        self._eod_bars = _closes_by_ticker(sessions)
         self._publish_eod(self._tickers)
 
     def _publish_eod(self, tickers: list[str]) -> None:
@@ -196,30 +285,3 @@ class MassiveDataSource(MarketDataSource):
             if ticker in self._eod_bars:
                 close, previous_close, timestamp = self._eod_bars[ticker]
                 self._cache.update(ticker, close, timestamp, previous_close)
-
-    async def _latest_sessions(self) -> list[list[GroupedDailyAgg]]:
-        """Walk back from today to the two most recent sessions with data."""
-        sessions: list[list[GroupedDailyAgg]] = []
-        today = datetime.now(UTC).date()
-        for offset in range(EOD_LOOKBACK_DAYS):
-            day = today - timedelta(days=offset)
-            if day.weekday() >= 5:
-                continue
-            bars = await self._fetch_grouped_day(day)
-            if bars:
-                sessions.append(bars)
-            if len(sessions) == 2:
-                break
-            await asyncio.sleep(self._eod_call_spacing)
-        return sessions
-
-    async def _fetch_grouped_day(self, day: date) -> list[GroupedDailyAgg]:
-        """Bars for one date; empty if it is a holiday or too recent for the plan."""
-        try:
-            return await asyncio.to_thread(
-                self._client.get_grouped_daily_aggs, day.isoformat(), adjusted=True
-            )
-        except BadResponse as e:
-            if _is_plan_limit(e):
-                return []
-            raise
