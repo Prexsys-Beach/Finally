@@ -1,0 +1,83 @@
+@import "tailwindcss";
+@import "@fontsource-variable/sofia-sans-semi-condensed/index.css";
+
+@theme {
+  --font-sans: "Sofia Sans Semi Condensed Variable", system-ui, sans-serif;
+  --color-canvas: #0d1117;
+  --color-raised: #151c26;
+  --color-line: #2b3543;
+  --color-ink: #dfe5ec;
+  --color-muted: #94a1b2;
+  --color-accent: #ecad0a;
+  --color-primary: #209dd7;
+  --color-submit: #753991;
+  --color-up: #3ecf8e;
+  --color-down: #ff7b72;
+  --color-tile-up: #17734c;
+  --color-tile-down: #a8322b;
+  --color-tile-flat: #27313e;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-feature-settings: "tnum";
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Prices flash on, then fade as the class is removed */
+.price-cell {
+  transition: background-color 500ms ease-out;
+}
+
+.flash-up {
+  background-color: rgb(62 207 142 / 0.32);
+  transition: none;
+}
+
+.flash-down {
+  background-color: rgb(255 123 114 / 0.32);
+  transition: none;
+}
+
+/* Cash is the unspent part of the portfolio, so it reads as texture, not P&L */
+.cash-tile {
+  background-color: var(--color-raised);
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 7px,
+    rgb(148 161 178 / 0.14) 7px 8px
+  );
+}
+
+.tile {
+  transition:
+    left 350ms ease,
+    top 350ms ease,
+    width 350ms ease,
+    height 350ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .price-cell,
+  .tile {
+    transition: none;
+  }
+}
