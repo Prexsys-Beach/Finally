@@ -3,19 +3,18 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from massive.rest.models import TickerSnapshot
 
 from app.market.cache import PriceCache
 from app.market.massive_client import MassiveDataSource
 
 
-def _make_snapshot(ticker: str, price: float, timestamp_ms: int) -> MagicMock:
-    """Create a mock Massive snapshot object."""
-    snap = MagicMock()
-    snap.ticker = ticker
-    snap.last_trade = MagicMock()
-    snap.last_trade.price = price
-    snap.last_trade.timestamp = timestamp_ms
-    return snap
+def _make_snapshot(ticker: str, price: float, timestamp_ms: int) -> TickerSnapshot:
+    """Build a real snapshot from a documented payload. Never use MagicMock here:
+    it invents attributes, which is how a nonexistent field went unnoticed."""
+    return TickerSnapshot.from_dict(
+        {"ticker": ticker, "lastTrade": {"p": price, "t": timestamp_ms * 1_000_000}}
+    )
 
 
 @pytest.mark.asyncio
@@ -56,9 +55,7 @@ class TestMassiveDataSource:
         source._client = MagicMock()  # Satisfy the _poll_once guard
 
         good_snap = _make_snapshot("AAPL", 190.50, 1707580800000)
-        bad_snap = MagicMock()
-        bad_snap.ticker = "BAD"
-        bad_snap.last_trade = None  # Will cause AttributeError
+        bad_snap = TickerSnapshot.from_dict({"ticker": "BAD"})  # No usable price
 
         with patch.object(source, "_fetch_snapshots", return_value=[good_snap, bad_snap]):
             await source._poll_once()

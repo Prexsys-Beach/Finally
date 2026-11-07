@@ -128,6 +128,9 @@ OPENROUTER_API_KEY=your-openrouter-api-key-here
 # If not set, the built-in market simulator is used (recommended for most users)
 MASSIVE_API_KEY=
 
+# Optional: Seconds between Massive polls (default 15; 2-5 suits real-time paid plans)
+MASSIVE_POLL_INTERVAL=
+
 # Optional: Set to "true" for deterministic mock LLM responses (testing)
 LLM_MOCK=false
 ```
@@ -158,16 +161,19 @@ Both the simulator and the Massive client implement the same abstract interface.
 
 ### Massive API (Optional)
 
-- REST API polling (not WebSocket) — simpler, works on all tiers
-- Polls for the union of all watched tickers on a configurable interval
-- Free tier (5 calls/min): poll every 15 seconds
-- Paid tiers: poll every 2-15 seconds depending on tier
-- Parses REST response into the same format as the simulator
+- REST API polling (not WebSocket) — simpler
+- Polls for the union of all tracked tickers on a configurable interval (`MASSIVE_POLL_INTERVAL`, default 15 seconds)
+- Advanced and Business plans: real-time snapshots; poll every 2-5 seconds
+- Starter and Developer plans: snapshots delayed 15 minutes; the default interval is fine
+- Free Basic plan: no snapshot access, so the backend falls back to end-of-day closes, refreshed hourly. Prices don't tick on this plan; omit the key to use the simulator for a live-looking demo
+- Parses REST responses into the same format as the simulator
+
+See `planning/MASSIVE_API.md` and `planning/MARKET_INTERFACE.md` for details.
 
 ### Shared Price Cache
 
 - A single background task (simulator or Massive poller) writes to an in-memory price cache
-- The cache holds the latest price, previous price, and timestamp for each ticker
+- The cache holds the latest price, previous price, previous close, and timestamp for each ticker
 - SSE streams read from this cache and push updates to connected clients
 - This architecture supports future multi-user scenarios without changes to the data layer
 
@@ -176,7 +182,7 @@ Both the simulator and the Massive client implement the same abstract interface.
 - Endpoint: `GET /api/stream/prices`
 - Long-lived SSE connection; client uses native `EventSource` API
 - Server pushes price updates for all tickers known to the system at a regular cadence (~500ms) — in the single-user model this is equivalent to the user's watchlist
-- Each SSE event contains ticker, price, previous price, timestamp, and change direction
+- Each SSE event contains ticker, price, previous price, timestamp, change direction, previous close, and daily change %
 - Client handles reconnection automatically (EventSource has built-in retry)
 
 ---

@@ -10,7 +10,7 @@ import random
 import numpy as np
 
 from .cache import PriceCache
-from .interface import MarketDataSource
+from .interface import DataMode, MarketDataSource, normalize_ticker
 from .seed_prices import (
     CORRELATION_GROUPS,
     CROSS_GROUP_CORR,
@@ -39,7 +39,8 @@ class GBMSimulator:
         Z      = correlated standard normal random variable
 
     The tiny dt (~8.5e-8 for 500ms ticks over 252 trading days * 6.5h/day)
-    produces sub-cent moves per tick that accumulate naturally over time.
+    produces moves of roughly 1-10 cents per tick on the seed prices, which
+    accumulate naturally over time.
     """
 
     # 500ms expressed as a fraction of a trading year
@@ -216,16 +217,25 @@ class SimulatorDataSource(MarketDataSource):
         self._sim: GBMSimulator | None = None
         self._task: asyncio.Task | None = None
 
+    @property
+    def mode(self) -> DataMode:
+        return "simulated"
+
+    def _seed_cache(self, ticker: str) -> None:
+        """Publish a starting price. It is also the reference for daily change."""
+        price = self._sim.get_price(ticker)
+        if price is not None:
+            self._cache.update(ticker=ticker, price=price, previous_close=price)
+
     async def start(self, tickers: list[str]) -> None:
+        tickers = [normalize_ticker(t) for t in tickers]
         self._sim = GBMSimulator(
             tickers=tickers,
             event_probability=self._event_prob,
         )
         # Seed the cache with initial prices so SSE has data immediately
         for ticker in tickers:
-            price = self._sim.get_price(ticker)
-            if price is not None:
-                self._cache.update(ticker=ticker, price=price)
+            self._seed_cache(ticker)
         self._task = asyncio.create_task(self._run_loop(), name="simulator-loop")
         logger.info("Simulator started with %d tickers", len(tickers))
 
@@ -240,15 +250,14 @@ class SimulatorDataSource(MarketDataSource):
         logger.info("Simulator stopped")
 
     async def add_ticker(self, ticker: str) -> None:
+        ticker = normalize_ticker(ticker)
         if self._sim:
             self._sim.add_ticker(ticker)
-            # Seed cache immediately so the ticker has a price right away
-            price = self._sim.get_price(ticker)
-            if price is not None:
-                self._cache.update(ticker=ticker, price=price)
+            self._seed_cache(ticker)  # So the ticker has a price right away
             logger.info("Simulator: added ticker %s", ticker)
 
     async def remove_ticker(self, ticker: str) -> None:
+        ticker = normalize_ticker(ticker)
         if self._sim:
             self._sim.remove_ticker(ticker)
         self._cache.remove(ticker)

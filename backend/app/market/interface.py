@@ -3,6 +3,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Literal
+
+DataMode = Literal["simulated", "live", "eod"]
+
+
+def normalize_ticker(ticker: str) -> str:
+    """Canonical ticker form. Massive tickers are case-sensitive and uppercase."""
+    return ticker.upper().strip()
 
 
 class MarketDataSource(ABC):
@@ -21,6 +29,11 @@ class MarketDataSource(ABC):
         # ... app shutting down ...
         await source.stop()
     """
+
+    @property
+    @abstractmethod
+    def mode(self) -> DataMode:
+        """What kind of prices this source is currently producing."""
 
     @abstractmethod
     async def start(self, tickers: list[str]) -> None:
