@@ -35,12 +35,27 @@ function Remove-Container {
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Error "Docker isn't installed. Get it from https://www.docker.com/products/docker-desktop/"
 }
-$ErrorActionPreference = "Continue"
-& docker info 2>$null | Out-Null
-$dockerRunning = $LASTEXITCODE -eq 0
-$ErrorActionPreference = "Stop"
-if (-not $dockerRunning) {
-    Write-Error "Docker isn't running. Start Docker Desktop, then run this again."
+function Test-Docker {
+    $ErrorActionPreference = "Continue"
+    & docker info 2>$null | Out-Null
+    return $LASTEXITCODE -eq 0
+}
+
+if (-not (Test-Docker)) {
+    $desktop = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
+    if (Test-Path $desktop) {
+        Start-Process $desktop
+        Write-Host -NoNewline "Starting Docker Desktop"
+        for ($i = 0; $i -lt 120; $i++) {
+            if (Test-Docker) { break }
+            Write-Host -NoNewline "."
+            Start-Sleep -Seconds 1
+        }
+        Write-Host ""
+    }
+    if (-not (Test-Docker)) {
+        Write-Error "Docker isn't running. Start Docker Desktop, then run this again."
+    }
 }
 
 Set-Location $Root
@@ -63,7 +78,7 @@ if ($Build -or -not $imageExists) {
 
 if (Test-Running) {
     Write-Host "FinAlly is already running at $Url"
-    Write-Host "To load code or .env changes: scripts\stop_windows.ps1, then scripts\start_windows.ps1 -Build"
+    Write-Host "To load code or .env changes: scripts\start_windows.ps1 -Build"
 } else {
     Remove-Container
     & docker run -d --name $Container --env-file .env -v "${Volume}:/app/db" -p 8000:8000 $Image | Out-Null

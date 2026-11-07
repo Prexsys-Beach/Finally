@@ -28,8 +28,19 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 if ! docker info >/dev/null 2>&1; then
-  echo "Docker isn't running. Start Docker Desktop, then run this again." >&2
-  exit 1
+  if [ "$(uname)" = "Darwin" ] && open -a Docker >/dev/null 2>&1; then
+    printf "Starting Docker Desktop"
+    for _ in $(seq 1 120); do
+      docker info >/dev/null 2>&1 && break
+      printf "."
+      sleep 1
+    done
+    echo
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker isn't running. Start Docker Desktop, then run this again." >&2
+    exit 1
+  fi
 fi
 
 cd "$ROOT"
@@ -46,7 +57,7 @@ fi
 
 if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]; then
   echo "FinAlly is already running at $URL"
-  echo "To load code or .env changes: scripts/stop_mac.sh, then scripts/start_mac.sh --build"
+  echo "To load code or .env changes: scripts/start_mac.sh --build"
 else
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   docker run -d \
