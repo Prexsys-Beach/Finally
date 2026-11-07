@@ -218,3 +218,8 @@ frontend/out/
 frontend/next-env.d.ts
 frontend/*.tsbuildinfo
 backend/static/
+
+# Playwright E2E
+test/node_modules/
+test/test-results/
+test/playwright-report/

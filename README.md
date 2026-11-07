@@ -26,18 +26,14 @@ Single Docker container serving everything on port 8000:
 ## Quick Start
 
 ```bash
-# Clone and configure
-cp .env.example .env
-# Add your OPENROUTER_API_KEY to .env
-
-# Build if needed, start, and open the browser
+# Starts Docker Desktop if needed, creates .env, builds, runs, and opens the browser
 scripts/start_mac.sh            # Windows: scripts\start_windows.ps1
 
 # Stop. Your portfolio is kept in the finally-data Docker volume.
 scripts/stop_mac.sh             # Windows: scripts\stop_windows.ps1
 ```
 
-Pass `--build` (Windows: `-Build`) to rebuild after changing the code. To start again from $10,000, stop the app and run `docker volume rm finally-data`.
+Add your `OPENROUTER_API_KEY` to `.env` to enable AI chat. Pass `--build` (Windows: `-Build`) to load code or `.env` changes, even while the app is running. To start again from $10,000, stop the app and run `docker volume rm finally-data`.
 
 To run it by hand:
 
@@ -55,6 +51,14 @@ docker run -v finally-data:/app/db -p 8000:8000 --env-file .env finally
 | `MASSIVE_SEED_SIMULATOR` | No | `true` with a Massive key starts the simulator from real closes |
 | `MASSIVE_POLL_INTERVAL` | No | Seconds between Massive polls; default 15 |
 | `LLM_MOCK` | No | Set `true` for deterministic mock LLM responses (testing) |
+
+## Testing
+
+```bash
+test/run_e2e.sh
+```
+
+Runs the Playwright suite in Docker against a throwaway app, with a fresh database and mock LLM replies. It doesn't touch a running app or its data. Failure reports land in `test/playwright-report`.
 
 ## Project Structure
 

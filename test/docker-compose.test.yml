@@ -1,0 +1,25 @@
+# Runs the E2E suite against a throwaway app container. No ports are published
+# and no volume is mounted, so it can't touch a running app or its data.
+# Use test/run_e2e.sh, which also cleans up.
+services:
+  # Not named "app": Chrome forces HTTPS on that name, as it's a preloaded TLD
+  web:
+    build: ..
+    environment:
+      LLM_MOCK: "true"
+      MASSIVE_API_KEY: ""
+
+  playwright:
+    # Keep this version equal to @playwright/test in package.json
+    image: mcr.microsoft.com/playwright:v1.64.1-noble
+    working_dir: /e2e
+    volumes:
+      - .:/e2e
+      - /e2e/node_modules
+    environment:
+      BASE_URL: http://web:8000
+      CI: "true"
+    command: sh -c "npm ci --no-audit --no-fund && npx playwright test"
+    depends_on:
+      web:
+        condition: service_healthy

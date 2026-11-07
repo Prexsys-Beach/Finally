@@ -8,6 +8,41 @@ import type { Portfolio } from "@/lib/types";
 const CASH = "Cash";
 const FULL_COLOR_AT_PERCENT = 5;
 const GAP = 2;
+const CHAR_WIDTH = 8.5; // Generous for this font, so estimates err towards fitting
+const SIDE_PADDING = 16;
+const STACKED_HEIGHT = 62; // Two lines plus padding
+const LINE_HEIGHT = 30; // One line plus padding
+
+type TileContent = "stacked" | "inline" | "label" | "none";
+
+/** The most a tile can show without clipping. Short tiles keep their value on one line. */
+export function tileContent(label: string, value: string, width: number, height: number): TileContent {
+  const fits = (characters: number) => characters * CHAR_WIDTH + SIDE_PADDING <= width;
+  if (height >= STACKED_HEIGHT && fits(Math.max(label.length, value.length))) return "stacked";
+  if (height >= LINE_HEIGHT && fits(label.length + value.length + 1)) return "inline";
+  if (height >= LINE_HEIGHT && fits(label.length)) return "label";
+  return "none";
+}
+
+function TileText({ content, label, value }: { content: TileContent; label: string; value: string }) {
+  if (content === "none") return null;
+  if (content === "stacked") {
+    return (
+      <>
+        <div className="font-semibold">{label}</div>
+        <div className="text-sm">{value}</div>
+      </>
+    );
+  }
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="font-semibold">{label}</span>
+      {content === "inline" && <span className="text-sm">{value}</span>}
+    </div>
+  );
+}
+
+const tilePadding = (content: TileContent) => (content === "stacked" ? "p-2" : "px-2 py-0.5");
 
 /** Diverging scale: neutral at zero, full color at ±5%. Tiles also print the signed value. */
 export function tileColor(percent: number | null): string {
@@ -51,7 +86,6 @@ export function Heatmap({ portfolio, onSelect }: Props) {
         {tiles.map((tile) => {
           const position = portfolio?.positions.find((p) => p.ticker === tile.id);
           const weight = total > 0 ? (tile.value / total) * 100 : 0;
-          const roomy = tile.width > 56 && tile.height > 38;
           const box = {
             left: tile.x,
             top: tile.y,
@@ -59,31 +93,34 @@ export function Heatmap({ portfolio, onSelect }: Props) {
             height: Math.max(tile.height - GAP, 0),
           };
           if (!position) {
+            const value = formatMoney(tile.value);
+            const content = tileContent(CASH, value, tile.width, tile.height);
             return (
               <div
                 key={tile.id}
                 data-testid="heatmap-tile-cash"
-                className="cash-tile tile absolute overflow-hidden p-2"
+                title={`Cash: ${value}, ${weight.toFixed(1)}% of portfolio`}
+                className={`cash-tile tile absolute overflow-hidden ${tilePadding(content)}`}
                 style={box}
               >
-                <div className="font-semibold">Cash</div>
-                {roomy && <div className="text-sm">{formatMoney(tile.value)}</div>}
+                <TileText content={content} label={CASH} value={value} />
               </div>
             );
           }
           const percent = position.unrealized_pnl_percent;
+          const value = formatPercent(percent);
+          const content = tileContent(tile.id, value, tile.width, tile.height);
           return (
             <button
               key={tile.id}
               type="button"
               data-testid={`heatmap-tile-${tile.id}`}
-              title={`${tile.id}: ${formatPercent(percent)}, ${weight.toFixed(1)}% of portfolio`}
+              title={`${tile.id}: ${value}, ${weight.toFixed(1)}% of portfolio`}
               onClick={() => onSelect(tile.id)}
-              className="tile absolute overflow-hidden p-2 text-left text-[#f2f5f8] hover:brightness-110"
+              className={`tile absolute overflow-hidden text-left text-[#f2f5f8] hover:brightness-110 ${tilePadding(content)}`}
               style={{ ...box, background: tileColor(percent) }}
             >
-              <div className="font-semibold">{tile.id}</div>
-              {roomy && <div className="text-sm">{formatPercent(percent)}</div>}
+              <TileText content={content} label={tile.id} value={value} />
             </button>
           );
         })}
