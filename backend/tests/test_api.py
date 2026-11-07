@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import signal
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -9,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.db import DEFAULT_TICKERS
-from app.main import create_app
+from app.main import create_app, stop_on_shutdown_signal
 from app.market import PriceCache
 from app.market.stream import _generate_events
 
@@ -167,6 +169,23 @@ class TestStaticFiles:
             assert client.get("/api/health").json()["status"] == "ok"
 
 
+class TestShutdownSignal:
+    @pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+    def test_sets_stop_and_keeps_the_existing_handler(self, signum):
+        calls = []
+        original = signal.getsignal(signum)
+        signal.signal(signum, lambda number, frame: calls.append(number))
+        stop = threading.Event()
+        try:
+            stop_on_shutdown_signal(stop)
+            signal.getsignal(signum)(signum, None)
+        finally:
+            signal.signal(signum, original)
+
+        assert stop.is_set()
+        assert calls == [signum]
+
+
 class TestPriceStream:
     async def test_events_contain_daily_change(self):
         cache = PriceCache()
@@ -182,6 +201,24 @@ class TestPriceStream:
 
         assert event.startswith("data: ")
         assert json.loads(event[6:])["AAPL"]["day_change_percent"] == 1.0638
+
+    async def test_stream_ends_when_stop_is_set(self):
+        cache = PriceCache()
+        cache.update("AAPL", 190.0)
+        request = AsyncMock()
+        request.is_disconnected.return_value = False
+        request.client = None
+        stop = threading.Event()
+
+        events = _generate_events(cache, request, interval=0.01, stop=stop)
+        await events.__anext__()
+        await events.__anext__()
+        stop.set()
+
+        async def drain() -> list[str]:
+            return [event async for event in events]
+
+        assert await asyncio.wait_for(drain(), timeout=1) == []
 
     def test_route_is_registered(self, client):
         paths = [route.path for route in client.app.routes]
