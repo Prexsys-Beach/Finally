@@ -279,7 +279,11 @@ class TestMarketBars:
 class TestSettings:
     def test_defaults(self, client):
         body = client.get("/api/settings").json()
-        assert body["settings"] == {"synthetic_history_cutoff": "month"}
+        assert body["settings"] == {
+            "synthetic_history_cutoff": "month",
+            "analysis_panel_auto_switch": True,
+        }
+        assert body["choices"]["analysis_panel_auto_switch"] == [True, False]
         assert body["choices"]["synthetic_history_cutoff"] == [
             "never",
             "day",

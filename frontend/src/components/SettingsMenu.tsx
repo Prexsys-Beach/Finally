@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import type { HistoryCutoff, SettingsResponse } from "@/lib/types";
+import { onSettingsSaved, saveSettings } from "@/lib/settings";
+import type { HistoryCutoff, Settings, SettingsResponse } from "@/lib/types";
 
 const CUTOFF_LABELS: Record<HistoryCutoff, string> = {
   never: "Never",
@@ -21,6 +22,8 @@ export function SettingsMenu() {
   const [data, setData] = useState<SettingsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
+
+  useEffect(() => onSettingsSaved(setData), []);
 
   useEffect(() => {
     if (!open || data) return;
@@ -42,11 +45,15 @@ export function SettingsMenu() {
     };
   }, [open]);
 
-  const changeCutoff = async (value: HistoryCutoff) => {
+  // Show the change at once, and put it back if the save fails
+  const change = async (changes: Partial<Settings>) => {
+    const before = data;
     setError(null);
+    setData((current) => current && { ...current, settings: { ...current.settings, ...changes } });
     try {
-      setData(await api.updateSettings({ synthetic_history_cutoff: value }));
+      await saveSettings(changes);
     } catch (e) {
+      setData(before);
       setError(message(e));
     }
   };
@@ -79,7 +86,9 @@ export function SettingsMenu() {
             id="synthetic-history-cutoff"
             value={data?.settings.synthetic_history_cutoff ?? ""}
             disabled={!data}
-            onChange={(event) => void changeCutoff(event.target.value as HistoryCutoff)}
+            onChange={(event) =>
+              void change({ synthetic_history_cutoff: event.target.value as HistoryCutoff })
+            }
             className="mt-1 w-full border border-line bg-canvas px-2 py-1"
           >
             {!data && <option value="">Loading…</option>}
@@ -93,6 +102,21 @@ export function SettingsMenu() {
             Once a ticker has this much real price history, analysis ignores its simulated
             history. Charts still show it, labeled.
           </p>
+          <label className="mt-3 flex items-start gap-2">
+            <input
+              type="checkbox"
+              checked={data?.settings.analysis_panel_auto_switch ?? false}
+              disabled={!data}
+              onChange={(event) => void change({ analysis_panel_auto_switch: event.target.checked })}
+              className="mt-1"
+            />
+            <span>
+              <span className="block font-medium">Show the analysis the assistant used</span>
+              <span className="text-xs text-muted">
+                When a reply looks at portfolio risk, the Risk view comes to the front.
+              </span>
+            </span>
+          </label>
           {error && (
             <p role="alert" className="mt-2 text-down">
               {error}

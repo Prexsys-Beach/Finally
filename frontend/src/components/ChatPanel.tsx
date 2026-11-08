@@ -3,7 +3,21 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { formatMoney, formatQuantity } from "@/lib/format";
-import type { ChatActions, ChatMessage } from "@/lib/types";
+import type { ChatActions, ChatMessage, ToolCallRecord } from "@/lib/types";
+
+/** A short label for one lookup, e.g. "NVDA indicators (1d)". */
+export function describeLookup(call: ToolCallRecord): string {
+  const ticker = typeof call.arguments.ticker === "string" ? call.arguments.ticker.toUpperCase() : "";
+  const timeframe = typeof call.arguments.timeframe === "string" ? call.arguments.timeframe : "1d";
+  const label =
+    {
+      get_indicators: `${ticker} indicators (${timeframe})`,
+      get_bars: `${ticker} prices (${timeframe})`,
+      get_portfolio_risk: "portfolio risk",
+      get_correlations: "correlations",
+    }[call.name] ?? call.name;
+  return call.status === "ok" ? label : `${label}, unavailable`;
+}
 
 function describeActions(actions: ChatActions | null): { text: string; failed: boolean }[] {
   if (!actions) return [];
@@ -29,6 +43,11 @@ export function Message({ message }: { message: ChatMessage }) {
   return (
     <li data-testid={`chat-${message.role}`} className={mine ? "border-l-2 border-primary pl-2" : ""}>
       <p className="whitespace-pre-wrap">{message.content}</p>
+      {message.actions?.tool_calls && message.actions.tool_calls.length > 0 && (
+        <p data-testid="chat-lookups" className="mt-1 text-xs text-muted">
+          Analysis used: {message.actions.tool_calls.map(describeLookup).join(" · ")}
+        </p>
+      )}
       {describeActions(message.actions).map((action) => (
         <p
           key={action.text}
@@ -45,7 +64,7 @@ export function Message({ message }: { message: ChatMessage }) {
 interface Props {
   open: boolean;
   onToggle: () => void;
-  onActions: () => Promise<void>;
+  onActions: (actions: ChatActions) => Promise<void>;
 }
 
 export function ChatPanel({ open, onToggle, onActions }: Props) {
@@ -72,12 +91,9 @@ export function ChatPanel({ open, onToggle, onActions }: Props) {
     setDraft("");
     setMessages((list) => [...list, { role: "user", content: text, actions: null }]);
     try {
-      const { message, trades, watchlist_changes } = await api.chat(text);
-      setMessages((list) => [
-        ...list,
-        { role: "assistant", content: message, actions: { trades, watchlist_changes } },
-      ]);
-      await onActions();
+      const { message, ...actions } = await api.chat(text);
+      setMessages((list) => [...list, { role: "assistant", content: message, actions }]);
+      await onActions(actions);
     } catch (e) {
       // The server stored nothing, so hand the text back for another try
       setMessages((list) => list.slice(0, -1));

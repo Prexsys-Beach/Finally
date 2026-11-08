@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import chat
@@ -21,8 +21,11 @@ async def get_chat(db: Db) -> dict:
 
 
 @router.post("/chat")
-async def post_chat(body: ChatRequest, db: Db, cache: Cache, source: Source) -> dict:
+async def post_chat(
+    request: Request, body: ChatRequest, db: Db, cache: Cache, source: Source
+) -> dict:
+    retention_days = request.app.state.history.retention_days
     try:
-        return await chat.handle_chat(db, cache, source, body.message)
+        return await chat.handle_chat(db, cache, source, body.message, retention_days)
     except chat.ChatError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e

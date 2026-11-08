@@ -177,6 +177,13 @@ The total time budget stays bounded: a per-call timeout plus an overall limit (a
 
 **Tests**: loop with a fake model (tool round limit, timeout fallback, unknown tool name, bad arguments returned to the model as an error result rather than raised); tools never write to the database; existing chat tests still pass.
 
+**As built**:
+- The spike confirmed tool calling and structured output both work for `gpt-oss-120b` on Cerebras. Combined in one call, though, the model filled in unrequested trades in 2 of 4 runs (for example "sell 10 NVDA" when only asked whether NVDA was overbought); with lookups first and a separate structured call, 0 of 4. The loop uses the separate call. It costs one extra call of about a second.
+- Tools so far: `get_indicators`, `get_bars`, `get_portfolio_risk`, `get_correlations`. `run_forecast`, `run_backtest` and `get_prediction_record` arrive with their phases.
+- litellm imports its MCP module whenever a call passes `tools`, which needs the `mcp` package; it is a dependency for that reason.
+- `analysis_panel_auto_switch` (default on) arrived here: replies that used `get_portfolio_risk` or `get_correlations` bring the Risk view forward. Toggled from an "Auto" button on the panel or the settings menu.
+- Live check through the app (simulated prices): "Is NVDA overbought?" looked up indicators and answered with RSI, SMA and bands; "How risky is my portfolio?" used both risk tools and cited volatility, beta, concentration and correlations; unrelated questions used no tools. Replies took 0.5-3 seconds.
+
 ### Phase 4 — Forecasts
 
 **Monte Carlo** (`backend/app/analytics/forecast.py`):

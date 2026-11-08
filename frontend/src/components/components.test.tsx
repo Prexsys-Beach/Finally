@@ -194,11 +194,16 @@ describe("Header", () => {
   });
 });
 
+const settingsResponse = (cutoff: HistoryCutoff = "month", auto = true) => ({
+  settings: { synthetic_history_cutoff: cutoff, analysis_panel_auto_switch: auto },
+  choices: {
+    synthetic_history_cutoff: ["never", "day", "week", "month", "quarter", "year"] as HistoryCutoff[],
+    analysis_panel_auto_switch: [true, false],
+  },
+});
+
 describe("SettingsMenu", () => {
-  const response = (cutoff: HistoryCutoff) => ({
-    settings: { synthetic_history_cutoff: cutoff },
-    choices: { synthetic_history_cutoff: ["never", "day", "week", "month", "quarter", "year"] as HistoryCutoff[] },
-  });
+  const response = (cutoff: HistoryCutoff, auto = true) => settingsResponse(cutoff, auto);
 
   it("loads on open and saves a change", async () => {
     vi.spyOn(api, "settings").mockResolvedValue(response("month"));
@@ -223,6 +228,18 @@ describe("SettingsMenu", () => {
     await waitFor(() => expect(select).toHaveValue("never"));
   });
 
+  it("turns the analysis auto-switch on and off", async () => {
+    vi.spyOn(api, "settings").mockResolvedValue(response("month", true));
+    const save = vi.spyOn(api, "updateSettings").mockResolvedValue(response("month", false));
+    render(<SettingsMenu />);
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const box = screen.getByRole("checkbox", { name: /Show the analysis the assistant used/ });
+    await waitFor(() => expect(box).toBeChecked());
+    await userEvent.click(box);
+    expect(save).toHaveBeenCalledWith({ analysis_panel_auto_switch: false });
+    await waitFor(() => expect(box).not.toBeChecked());
+  });
+
   it("shows why a save failed and closes on Escape", async () => {
     vi.spyOn(api, "settings").mockResolvedValue(response("month"));
     vi.spyOn(api, "updateSettings").mockRejectedValue(new Error("Unknown setting"));
@@ -232,6 +249,7 @@ describe("SettingsMenu", () => {
     await waitFor(() => expect(select).toHaveValue("month"));
     await userEvent.selectOptions(select, "day");
     expect(await screen.findByRole("alert")).toHaveTextContent("Unknown setting");
+    expect(select).toHaveValue("month"); // Put back after the failed save
 
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByLabelText("Stop using simulated history after")).not.toBeInTheDocument();
@@ -317,6 +335,31 @@ describe("Message", () => {
     render(<ul><Message message={{ role: "assistant", content: "Done", actions }} /></ul>);
     const lines = screen.getAllByTestId("chat-action").map((node) => node.textContent);
     expect(lines).toEqual(["✓ Added PYPL to watchlist", "✓ Bought 3 AAPL at $100.00", "✕ Didn't buy 9 NVDA"]);
+    expect(screen.queryByTestId("chat-lookups")).not.toBeInTheDocument();
+  });
+
+  it("lists the lookups behind a reply", () => {
+    const lookup = (name: string, args: Record<string, unknown>, status: "ok" | "failed" = "ok") => ({
+      name,
+      arguments: args,
+      status,
+      error: status === "ok" ? null : "No price history for ZZZZ.",
+    });
+    const actions = {
+      trades: [],
+      watchlist_changes: [],
+      tool_calls: [
+        lookup("get_indicators", { ticker: "nvda" }),
+        lookup("get_bars", { ticker: "AAPL", timeframe: "1m" }),
+        lookup("get_portfolio_risk", {}),
+        lookup("get_correlations", {}),
+        lookup("get_indicators", { ticker: "ZZZZ" }, "failed"),
+      ],
+    };
+    render(<ul><Message message={{ role: "assistant", content: "Here you go", actions }} /></ul>);
+    expect(screen.getByTestId("chat-lookups")).toHaveTextContent(
+      "Analysis used: NVDA indicators (1d) · AAPL prices (1m) · portfolio risk · correlations · ZZZZ indicators (1d), unavailable",
+    );
   });
 });
 
@@ -486,7 +529,7 @@ describe("RiskView", () => {
 });
 
 describe("AnalysisPanel", () => {
-  it("switches between the heatmap and risk", async () => {
+  const stubResize = () =>
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -494,8 +537,21 @@ describe("AnalysisPanel", () => {
         disconnect() {}
       },
     );
+
+  const setup = (auto: boolean) => {
+    localStorage.clear();
+    stubResize();
+    vi.spyOn(api, "settings").mockResolvedValue(settingsResponse("month", auto));
     vi.spyOn(api, "portfolioAnalytics").mockResolvedValue(risk);
-    render(<AnalysisPanel portfolio={portfolio} positionsKey="" onSelect={vi.fn()} />);
+    const props = { portfolio, positionsKey: "", onSelect: vi.fn() };
+    const view = render(<AnalysisPanel {...props} />);
+    const request = (at: number) =>
+      view.rerender(<AnalysisPanel {...props} viewRequest={{ view: "risk", at }} />);
+    return { request };
+  };
+
+  it("switches between the heatmap and risk", async () => {
+    setup(true);
     expect(screen.getByRole("heading")).toHaveTextContent("Holdings by weight and P&L");
     expect(api.portfolioAnalytics).not.toHaveBeenCalled();
 
@@ -505,6 +561,34 @@ describe("AnalysisPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Heatmap" }));
     expect(screen.getByTestId("heatmap")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it("brings the requested view forward when auto-switch is on", async () => {
+    const { request } = setup(true);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Auto" })).toHaveAttribute("aria-pressed", "true"));
+    request(1);
+    expect(await screen.findByTestId("risk-view")).toBeInTheDocument();
+
+    // A manual choice stands until the next request
+    await userEvent.click(screen.getByRole("button", { name: "Heatmap" }));
+    expect(screen.getByTestId("heatmap")).toBeInTheDocument();
+    request(2);
+    expect(await screen.findByTestId("risk-view")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it("stays put when auto-switch is off, and the toggle saves the setting", async () => {
+    const { request } = setup(false);
+    const auto = screen.getByRole("button", { name: "Auto" });
+    await waitFor(() => expect(auto).toHaveAttribute("aria-pressed", "false"));
+    request(1);
+    expect(screen.getByTestId("heatmap")).toBeInTheDocument();
+
+    const save = vi.spyOn(api, "updateSettings").mockResolvedValue(settingsResponse("month", true));
+    await userEvent.click(auto);
+    expect(save).toHaveBeenCalledWith({ analysis_panel_auto_switch: true });
+    await waitFor(() => expect(auto).toHaveAttribute("aria-pressed", "true"));
     vi.unstubAllGlobals();
   });
 });

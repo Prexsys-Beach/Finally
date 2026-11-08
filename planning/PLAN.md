@@ -142,6 +142,9 @@ HISTORY_BACKFILL_DAYS=
 
 # Optional: Days of one-minute bars to keep (default 30; daily bars are kept)
 HISTORY_RETENTION_DAYS=
+
+# Optional: Lookup rounds the assistant may take before answering (default 4; 0 turns lookups off)
+CHAT_MAX_TOOL_ROUNDS=
 ```
 
 ### Behavior
@@ -341,11 +344,12 @@ When the user sends a chat message, the backend:
 1. Loads the user's current portfolio context (cash, positions with P&L, watchlist with live prices, total portfolio value)
 2. Loads recent conversation history from the `chat_messages` table
 3. Constructs a prompt with a system message, portfolio context, conversation history, and the user's new message
-4. Calls the LLM via LiteLLM → OpenRouter, requesting structured output, using the cerebras-inference skill
-5. Parses the complete structured JSON response
-6. Auto-executes any trades or watchlist changes specified in the response
-7. Stores the message and executed actions in `chat_messages`
-8. Returns the complete JSON response to the frontend (no token-by-token streaming — Cerebras inference is fast enough that a loading indicator is sufficient)
+4. Lets the model look things up: it may call read-only tools (`get_indicators`, `get_bars`, `get_portfolio_risk`, `get_correlations`) for up to `CHAT_MAX_TOOL_ROUNDS` rounds (default 4, within about 45 seconds). Tools never trade; a failed lookup goes back to the model as an error
+5. Calls the LLM via LiteLLM → OpenRouter, requesting structured output, using the cerebras-inference skill. This final call has no tools: asked for tools and structured output at once, the model sometimes filled in trades nobody asked for
+6. Parses the complete structured JSON response
+7. Auto-executes any trades or watchlist changes specified in the response
+8. Stores the message, executed actions and lookups (`tool_calls`) in `chat_messages`
+9. Returns the complete JSON response to the frontend (no token-by-token streaming — Cerebras inference is fast enough that a loading indicator is sufficient). The chat shows an "Analysis used" line, and a reply that read portfolio risk brings the Risk view forward when the `analysis_panel_auto_switch` setting is on
 
 ### Structured Output Schema
 
@@ -388,7 +392,7 @@ The LLM should be prompted as "FinAlly, an AI trading assistant" with instructio
 
 ### LLM Mock Mode
 
-When `LLM_MOCK=true`, the backend returns deterministic mock responses instead of calling OpenRouter. This enables:
+When `LLM_MOCK=true`, the backend returns deterministic mock responses instead of calling OpenRouter. "buy 5 AAPL", "sell 1 MSFT", "add PYPL" and "remove NFLX" act; "analyze NVDA" and any mention of "risk" run the real lookup tools. This enables:
 - Fast, free, reproducible E2E tests
 - Development without an API key
 - CI/CD pipelines

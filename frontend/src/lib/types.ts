@@ -31,6 +31,7 @@ export type HistoryCutoff = "never" | "day" | "week" | "month" | "quarter" | "ye
 
 export interface Settings {
   synthetic_history_cutoff: HistoryCutoff;
+  analysis_panel_auto_switch: boolean;
 }
 
 export interface SettingsResponse {
@@ -100,9 +101,18 @@ export interface WatchlistResult {
   error: string | null;
 }
 
+export interface ToolCallRecord {
+  name: string;
+  arguments: Record<string, unknown>;
+  status: "ok" | "failed";
+  error: string | null;
+}
+
 export interface ChatActions {
   trades: TradeResult[];
   watchlist_changes: WatchlistResult[];
+  /** Absent on messages stored before the assistant had tools */
+  tool_calls?: ToolCallRecord[];
 }
 
 export interface ChatMessage {
