@@ -5,6 +5,8 @@ import type {
   Health,
   Portfolio,
   PortfolioAnalytics,
+  PredictionRecord,
+  PredictionStats,
   Settings,
   SettingsResponse,
   Side,
@@ -60,6 +62,11 @@ export const api = {
     request<TickerAnalytics>(
       `/api/analytics/ticker/${encodeURIComponent(ticker)}?timeframe=${timeframe}&limit=${limit}`,
     ),
+  predictions: (limit = 20) =>
+    request<{ predictions: PredictionRecord[] }>(`/api/predictions?limit=${limit}`).then(
+      (r) => r.predictions,
+    ),
+  predictionStats: () => request<PredictionStats>("/api/predictions/stats"),
   portfolioAnalytics: (timeframe: Timeframe = "1d") =>
     request<PortfolioAnalytics>(`/api/analytics/portfolio?timeframe=${timeframe}`),
   updateSettings: (changes: Partial<Settings>) =>

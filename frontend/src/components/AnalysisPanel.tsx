@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { saveSettings, useSettings } from "@/lib/settings";
-import type { Portfolio } from "@/lib/types";
+import type { DataMode, Portfolio } from "@/lib/types";
 import { useStored } from "@/lib/useStored";
 import { Heatmap } from "./Heatmap";
 import { RiskView } from "./RiskView";
+import { ScorecardView } from "./ScorecardView";
 
-const VIEWS = { heatmap: "Heatmap", risk: "Risk" } as const;
+const VIEWS = { heatmap: "Heatmap", risk: "Risk", scorecard: "Scorecard" } as const;
 export type View = keyof typeof VIEWS;
 
 /** A request from elsewhere (an assistant reply) to show a view. `at` makes repeats distinct. */
@@ -20,6 +21,7 @@ const isView = (value: unknown): value is View => typeof value === "string" && v
 const CAPTIONS: Record<View, string> = {
   heatmap: "Holdings by weight and P&L",
   risk: "Portfolio risk, 1 trading day",
+  scorecard: "Prediction record",
 };
 
 interface Props {
@@ -27,10 +29,17 @@ interface Props {
   positionsKey: string;
   onSelect: (ticker: string) => void;
   viewRequest?: ViewRequest | null;
+  mode?: DataMode | null;
 }
 
 /** One panel, several views of the portfolio. */
-export function AnalysisPanel({ portfolio, positionsKey, onSelect, viewRequest = null }: Props) {
+export function AnalysisPanel({
+  portfolio,
+  positionsKey,
+  onSelect,
+  viewRequest = null,
+  mode = null,
+}: Props) {
   const [view, setView] = useStored<View>("finally.analysis-view", "heatmap", isView);
   const settings = useSettings();
   // Shown at once on a click; the saved value takes over when the save settles
@@ -71,7 +80,7 @@ export function AnalysisPanel({ portfolio, positionsKey, onSelect, viewRequest =
         type="button"
         aria-pressed={autoSwitch}
         disabled={!settings}
-        title="Bring the Risk view forward when an assistant reply looks at portfolio risk"
+        title="Bring the matching view forward when an assistant reply makes a prediction or looks at portfolio risk"
         onClick={toggleAuto}
         className={`ml-auto border border-line px-2 py-0.5 text-xs ${
           autoSwitch ? "bg-raised text-ink" : "text-muted hover:text-ink"
@@ -82,9 +91,7 @@ export function AnalysisPanel({ portfolio, positionsKey, onSelect, viewRequest =
     </div>
   );
 
-  return view === "heatmap" ? (
-    <Heatmap portfolio={portfolio} onSelect={onSelect} heading={heading} />
-  ) : (
-    <RiskView heading={heading} positionsKey={positionsKey} />
-  );
+  if (view === "risk") return <RiskView heading={heading} positionsKey={positionsKey} />;
+  if (view === "scorecard") return <ScorecardView heading={heading} mode={mode} />;
+  return <Heatmap portfolio={portfolio} onSelect={onSelect} heading={heading} />;
 }

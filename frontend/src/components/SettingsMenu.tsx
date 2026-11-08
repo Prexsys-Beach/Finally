@@ -113,7 +113,8 @@ export function SettingsMenu() {
             <span>
               <span className="block font-medium">Show the analysis the assistant used</span>
               <span className="text-xs text-muted">
-                When a reply looks at portfolio risk, the Risk view comes to the front.
+                When a reply makes a prediction or looks at portfolio risk, the Scorecard or Risk view
+                comes to the front.
               </span>
             </span>
           </label>

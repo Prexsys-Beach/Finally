@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from . import predictions
 from .analytics import service as analytics
 from .market import MarketDataSource, PriceCache
 from .market.bars import TIMEFRAME_SECONDS, recent_bars
@@ -86,6 +87,14 @@ TOOLS = [
         "equal-weighted watchlist, 1-day 95% Value at Risk and expected shortfall, "
         "concentration, max drawdown, Sharpe ratio, and per-position weight, "
         "volatility and beta. Weights include cash.",
+        {},
+        [],
+    ),
+    _function(
+        "get_prediction_record",
+        "How your past predictions turned out against a coin-flip baseline, per data "
+        "mode: hit rate with a 95% interval, Brier score (lower is better; 0.25 is a "
+        "coin flip), calibration by stated confidence, and the latest calls.",
         {},
         [],
     ),
@@ -191,7 +200,23 @@ def get_correlations(ctx: ToolContext, tickers: list[str] | None = None) -> dict
     }
 
 
+def get_prediction_record(ctx: ToolContext) -> dict:
+    latest = [
+        {
+            k: p[k]
+            for k in ("ticker", "direction", "confidence", "horizon_minutes", "made_at", "outcome")
+        }
+        for p in predictions.recent(ctx.conn, limit=10)
+    ]
+    return {
+        "current_data_mode": ctx.source.mode,
+        **predictions.stats(ctx.conn),
+        "latest": latest,
+    }
+
+
 _FUNCTIONS: dict[str, Callable[..., dict]] = {
+    "get_prediction_record": get_prediction_record,
     "get_indicators": get_indicators,
     "get_bars": get_bars,
     "get_portfolio_risk": get_portfolio_risk,

@@ -6,6 +6,8 @@ import type {
   HistoryCutoff,
   Portfolio,
   PortfolioAnalytics,
+  PredictionRecord,
+  PredictionScore,
   PriceUpdate,
   WatchlistEntry,
 } from "@/lib/types";
@@ -15,6 +17,7 @@ import { Header } from "./Header";
 import { AnalysisPanel } from "./AnalysisPanel";
 import { Heatmap, tileColor, tileContent } from "./Heatmap";
 import { correlationColor, RiskView } from "./RiskView";
+import { CalibrationChart, ScorecardView } from "./ScorecardView";
 import { SettingsMenu } from "./SettingsMenu";
 import { PositionsTable } from "./PositionsTable";
 import { TradeBar } from "./TradeBar";
@@ -338,6 +341,30 @@ describe("Message", () => {
     expect(screen.queryByTestId("chat-lookups")).not.toBeInTheDocument();
   });
 
+  it("shows recorded predictions inline", () => {
+    const call = {
+      id: "p1",
+      ticker: "NVDA",
+      direction: "up" as const,
+      confidence: 0.55,
+      horizon_minutes: 30,
+      reference_price: 800,
+      resolves_at: "",
+      status: "ok" as const,
+      error: null,
+    };
+    const actions = {
+      trades: [],
+      watchlist_changes: [],
+      predictions: [call, { ...call, ticker: "PYPL", status: "failed" as const, error: "PYPL isn't tracked." }],
+    };
+    render(<ul><Message message={{ role: "assistant", content: "Calls", actions }} /></ul>);
+    expect(screen.getAllByTestId("chat-action").map((n) => n.textContent)).toEqual([
+      "✓ Predicted NVDA up over 30 min · 55% confidence",
+      "✕ Didn't record a prediction for PYPL",
+    ]);
+  });
+
   it("lists the lookups behind a reply", () => {
     const lookup = (name: string, args: Record<string, unknown>, status: "ok" | "failed" = "ok") => ({
       name,
@@ -578,6 +605,21 @@ describe("AnalysisPanel", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows the scorecard when a reply made a prediction", async () => {
+    vi.spyOn(api, "predictionStats").mockResolvedValue({ modes: {} });
+    vi.spyOn(api, "predictions").mockResolvedValue([]);
+    localStorage.clear();
+    stubResize();
+    vi.spyOn(api, "settings").mockResolvedValue(settingsResponse("month", true));
+    const props = { portfolio, positionsKey: "", onSelect: vi.fn(), mode: "simulated" as const };
+    const view = render(<AnalysisPanel {...props} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Auto" })).toHaveAttribute("aria-pressed", "true"));
+    view.rerender(<AnalysisPanel {...props} viewRequest={{ view: "scorecard", at: 1 }} />);
+    expect(await screen.findByTestId("scorecard-view")).toBeInTheDocument();
+    expect(screen.getByRole("heading")).toHaveTextContent("Prediction record");
+    vi.unstubAllGlobals();
+  });
+
   it("stays put when auto-switch is off, and the toggle saves the setting", async () => {
     const { request } = setup(false);
     const auto = screen.getByRole("button", { name: "Auto" });
@@ -590,5 +632,83 @@ describe("AnalysisPanel", () => {
     expect(save).toHaveBeenCalledWith({ analysis_panel_auto_switch: true });
     await waitFor(() => expect(auto).toHaveAttribute("aria-pressed", "true"));
     vi.unstubAllGlobals();
+  });
+});
+
+const score = (overrides: Partial<PredictionScore> = {}): PredictionScore => ({
+  made: 10,
+  settled: 8,
+  hits: 5,
+  void: 1,
+  pending: 1,
+  hit_rate: 0.625,
+  hit_rate_interval: [0.306, 0.863],
+  brier: 0.241,
+  calibration: [
+    { range: [0.5, 0.6], count: 6, stated: 0.55, observed: 0.5 },
+    { range: [0.7, 0.8], count: 2, stated: 0.7, observed: 1 },
+  ],
+  ...overrides,
+});
+
+const call = (overrides: Partial<PredictionRecord> = {}): PredictionRecord => ({
+  id: "p1",
+  ticker: "NVDA",
+  direction: "up",
+  confidence: 0.55,
+  horizon_minutes: 30,
+  reference_price: 800,
+  data_mode: "simulated",
+  made_at: "2026-11-08T12:00:00+00:00",
+  resolves_at: "2026-11-08T12:30:00+00:00",
+  resolved_price: 805,
+  outcome: "hit",
+  note: null,
+  baseline_direction: "down",
+  baseline_outcome: "miss",
+  ...overrides,
+});
+
+describe("ScorecardView", () => {
+  it("compares the assistant with the coin flip for the current data", async () => {
+    vi.spyOn(api, "predictionStats").mockResolvedValue({
+      modes: {
+        simulated: { assistant: score(), baseline: score({ hits: 3, hit_rate: 0.375, brier: 0.25 }) },
+        live: { assistant: score({ made: 4 }), baseline: score() },
+      },
+    });
+    vi.spyOn(api, "predictions").mockResolvedValue([
+      call(),
+      call({ id: "p2", ticker: "AAPL", direction: "down", outcome: null, resolved_price: null, baseline_outcome: null }),
+      call({ id: "p3", data_mode: "live" }),
+    ]);
+    render(<ScorecardView heading={null} mode="simulated" />);
+    const view = await screen.findByTestId("scorecard-view");
+    await waitFor(() => expect(view).toHaveTextContent("62.5% (5/8)"));
+    expect(view).toHaveTextContent("95%: 31%–86%");
+    expect(view).toHaveTextContent("37.5% (3/8)");
+    expect(view).toHaveTextContent("0.241");
+    expect(view).toHaveTextContent("These prices are simulated");
+    expect(view).toHaveTextContent("Also recorded: 4 on live market data.");
+
+    const rows = screen.getByTestId("prediction-list").querySelectorAll("tbody tr");
+    expect(rows).toHaveLength(2); // Only this data mode
+    expect(rows[0]).toHaveTextContent("NVDA ↑ 55%30 min$800.00 → $805.00HitMiss");
+    expect(rows[1]).toHaveTextContent("AAPL ↓ 55%30 min$800.00 → …PendingPending");
+  });
+
+  it("invites a first prediction", async () => {
+    vi.spyOn(api, "predictionStats").mockResolvedValue({ modes: {} });
+    vi.spyOn(api, "predictions").mockResolvedValue([]);
+    render(<ScorecardView heading={null} mode="live" />);
+    expect(await screen.findByText(/No predictions on live market data yet/)).toBeInTheDocument();
+  });
+
+  it("plots each confidence band, sized by how many calls it holds", () => {
+    const { container } = render(<CalibrationChart calibration={score().calibration} />);
+    const dots = container.querySelectorAll("circle");
+    expect(dots).toHaveLength(2);
+    expect(dots[0].querySelector("title")?.textContent).toBe("Stated 55%, came true 50% of 6");
+    expect(Number(dots[0].getAttribute("r"))).toBeGreaterThan(Number(dots[1].getAttribute("r")));
   });
 });

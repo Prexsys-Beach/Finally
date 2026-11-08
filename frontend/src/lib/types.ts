@@ -108,9 +108,25 @@ export interface ToolCallRecord {
   error: string | null;
 }
 
+export type CallDirection = "up" | "down";
+
+export interface PredictionResult {
+  id: string | null;
+  ticker: string;
+  direction: CallDirection;
+  confidence: number;
+  horizon_minutes: number;
+  reference_price: number | null;
+  resolves_at: string | null;
+  status: "ok" | "failed";
+  error: string | null;
+}
+
 export interface ChatActions {
   trades: TradeResult[];
   watchlist_changes: WatchlistResult[];
+  /** Absent on messages stored before the prediction journal */
+  predictions?: PredictionResult[];
   /** Absent on messages stored before the assistant had tools */
   tool_calls?: ToolCallRecord[];
 }
@@ -191,4 +207,39 @@ export interface PortfolioAnalytics {
     note: string | null;
   };
   notes: string[];
+}
+
+export type Outcome = "hit" | "miss" | "void";
+
+export interface PredictionRecord {
+  id: string;
+  ticker: string;
+  direction: CallDirection;
+  confidence: number;
+  horizon_minutes: number;
+  reference_price: number;
+  data_mode: DataMode;
+  made_at: string;
+  resolves_at: string;
+  resolved_price: number | null;
+  outcome: Outcome | null;
+  note: string | null;
+  baseline_direction: CallDirection | null;
+  baseline_outcome: Outcome | null;
+}
+
+export interface PredictionScore {
+  made: number;
+  settled: number;
+  hits: number;
+  void: number;
+  pending: number;
+  hit_rate: number | null;
+  hit_rate_interval: [number, number] | null;
+  brier: number | null;
+  calibration: { range: [number, number]; count: number; stated: number; observed: number }[];
+}
+
+export interface PredictionStats {
+  modes: Partial<Record<DataMode, { assistant: PredictionScore; baseline: PredictionScore }>>;
 }

@@ -244,6 +244,14 @@ The backend fills in the reference price from `PriceCache` and the data mode fro
 
 **Tests**: resolver timing and outcomes; void handling; Brier and calibration math; reference price taken from the cache, not the model; stats split by data mode.
 
+**As built**:
+- Resolution uses the recorded (or vendor) one-minute bar for the minute a call comes due, falling back to the live price when the resolver is within two minutes of it. Synthetic bars never settle a call. A call whose price didn't move, or that came due while the app was down, is void and counts for nothing.
+- Validation: the ticker must be tracked and priced, confidence 0.5-1.0, horizon 1-10080 whole minutes. A refused call is reported in the reply like a failed trade.
+- Hit rates come with a 95% Wilson interval, so a few lucky calls don't look like skill.
+- The Scorecard shows the current data mode only, noting how many calls exist under other modes.
+- Live check (simulated prices): asked to predict NVDA in 30 minutes, the model looked at 30 one-minute bars, recorded "up" at 55% confidence and said the prices are simulated and the call is close to a coin flip. Told to "be decisive" about TSLA, it still kept 55%. Asked how its predictions had done, it used `get_prediction_record`.
+- A test on a generated random walk confirms the control group: always calling "up" lands within the 95% interval of 50%.
+
 ### Phase 6 — Backtesting
 
 **Runner** (`backend/app/analytics/backtest.py`):

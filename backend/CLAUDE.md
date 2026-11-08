@@ -27,6 +27,7 @@ API docs are at `http://localhost:8000/docs`. The database is created and seeded
 - `app/portfolio.py` — valuation, trades, snapshots. Use `place_trade()` for every trade, including LLM trades, so validation and ticker tracking stay in one place
 - `app/watchlist.py` — watchlist rules, plus `tracked_tickers()` and `release_ticker()`
 - `app/chat.py` — LLM chat. Lookup rounds with tools first, then a separate structured call for the answer (asking for both at once produced unrequested trades). Auto-executes through `place_trade()` and the watchlist functions. Set `LLM_MOCK=true` for deterministic replies: `buy 5 AAPL`, `sell 1 MSFT`, `add PYPL`, `remove NFLX` act; `analyze NVDA` and any mention of `risk` run real lookups
+- `app/predictions.py` — the prediction journal: `record()` (validates, takes the price from the cache, adds a coin-flip baseline), `resolve_due()` (settles against the recorded one-minute bar, or the live price if fresh; otherwise void), `stats()` and `recent()`. `resolve_loop` runs every 30 seconds from the lifespan
 - `app/assistant_tools.py` — the assistant's read-only tools, wrapping the analytics service. Errors go back to the model as `{"error": ...}`, never raised. The `mcp` dependency is there because litellm imports its MCP module whenever a call passes `tools`
 - `app/settings.py` — user settings: allowed values, defaults, storage
 - `app/routes/` — HTTP layer only

@@ -14,7 +14,7 @@ from typing import Literal
 from litellm import completion
 from pydantic import BaseModel, Field, ValidationError
 
-from . import assistant_tools
+from . import assistant_tools, predictions
 from .db import DEFAULT_USER_ID, new_id, utc_now
 from .market import MarketDataSource, PriceCache
 from .portfolio import TradeError, get_portfolio, place_trade
@@ -46,6 +46,13 @@ immediately at the current price, with no confirmation step.
 - Only list an action if you intend it to run now. Never list a trade you are merely suggesting.
 - Before making claims about trends, momentum, volatility, correlation or risk, look them \
 up with your tools, and cite the numbers you used. Tools only read data; they never trade.
+- Whenever you state a view on where a price will go, record it in "predictions": \
+ticker, direction (up or down), your honest confidence from 0.5 (a coin flip) to 1.0 \
+(certain), and a horizon in minutes (1 to 10080). If the user asks for a prediction, \
+give one and record it: never decline. Every prediction is scored against a coin flip, \
+so overconfidence costs you. When market_data_mode is "simulated" or "seeded", say in \
+your message that the prices are simulated and the call is close to a coin flip, and \
+keep confidence near 0.5. Use get_prediction_record to see how your past calls have done.
 - Your reply is final: everything is looked up before you write it. Never say you will \
 fetch or check something next. If a lookup failed or data is missing, say what is missing.
 - Tool results report which bars they used: "synthetic" bars are made-up history, \
@@ -70,10 +77,18 @@ class WatchlistChange(BaseModel):
     action: Literal["add", "remove"]
 
 
+class Prediction(BaseModel):
+    ticker: str
+    direction: Literal["up", "down"]
+    confidence: float  # 0.5 is a coin flip, 1.0 is certain
+    horizon_minutes: int
+
+
 class LLMResponse(BaseModel):
     message: str
     trades: list[TradeAction] = Field(default_factory=list)
     watchlist_changes: list[WatchlistChange] = Field(default_factory=list)
+    predictions: list[Prediction] = Field(default_factory=list)
 
 
 class ChatError(Exception):
@@ -119,14 +134,20 @@ def get_messages(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
     ]
 
 
-def _store(conn: sqlite3.Connection, role: str, content: str, actions: dict | None) -> None:
+def _store(
+    conn: sqlite3.Connection,
+    role: str,
+    content: str,
+    actions: dict | None,
+    message_id: str | None = None,
+) -> None:
     conn.execute(
         """
         INSERT INTO chat_messages (id, user_id, role, content, actions, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
-            new_id(),
+            message_id or new_id(),
             DEFAULT_USER_ID,
             role,
             content,
@@ -240,7 +261,21 @@ def _mock_tools(message: str, tools: assistant_tools.ToolContext) -> list[dict]:
 
 def _mock_response(message: str) -> LLMResponse:
     """Deterministic replies for LLM_MOCK=true: 'buy 5 AAPL', 'sell 1 MSFT',
-    'add PYPL', 'remove NFLX'. Anything else gets a fixed reply and no actions."""
+    'add PYPL', 'remove NFLX', and 'predict NVDA up' (optionally '70%' and '30m';
+    60% over 60 minutes otherwise). Anything else gets a fixed reply and no actions."""
+    calls = [
+        Prediction(
+            ticker=ticker,
+            direction=direction.lower(),
+            confidence=int(percent or 60) / 100,
+            horizon_minutes=int(minutes or 60),
+        )
+        for ticker, direction, percent, minutes in re.findall(
+            r"\bpredict\s+([A-Za-z.\-]+)\s+(up|down)(?:\s+(\d+)%)?(?:\s+(\d+)\s*m(?:in)?\b)?",
+            message,
+            re.IGNORECASE,
+        )
+    ]
     trades = [
         TradeAction(side=side.lower(), quantity=float(quantity), ticker=ticker)
         for side, quantity, ticker in re.findall(
@@ -252,7 +287,10 @@ def _mock_response(message: str) -> LLMResponse:
         for action, ticker in re.findall(r"\b(add|remove)\s+([A-Za-z.\-]+)", message, re.IGNORECASE)
     ]
     return LLMResponse(
-        message="Mock response: request received.", trades=trades, watchlist_changes=changes
+        message="Mock response: request received.",
+        trades=trades,
+        watchlist_changes=changes,
+        predictions=calls,
     )
 
 
@@ -289,9 +327,37 @@ async def _apply_trade(
     return result
 
 
-def _with_failures(message: str, trades: list[dict], changes: list[dict]) -> str:
+def _record_prediction(
+    conn: sqlite3.Connection,
+    cache: PriceCache,
+    source: MarketDataSource,
+    call: Prediction,
+    message_id: str,
+) -> dict:
+    result = {**call.model_dump(), "id": None, "reference_price": None, "resolves_at": None}
+    result |= {"status": "ok", "error": None}
+    try:
+        ticker = validate_ticker(call.ticker)
+        result["ticker"] = ticker
+        recorded = predictions.record(
+            conn,
+            cache,
+            source,
+            ticker,
+            call.direction,
+            call.confidence,
+            call.horizon_minutes,
+            chat_message_id=message_id,
+        )
+        result |= {k: recorded[k] for k in ("id", "reference_price", "resolves_at")}
+    except (ValueError, predictions.PredictionError) as e:
+        result |= {"status": "failed", "error": str(e)}
+    return result
+
+
+def _with_failures(message: str, *groups: list[dict]) -> str:
     """Add what didn't run, since the model replied before anything executed."""
-    failures = [f"- {item['error']}" for item in [*changes, *trades] if item["error"]]
+    failures = [f"- {item['error']}" for group in groups for item in group if item["error"]]
     if not failures:
         return message
     return "\n\n".join([message, "Some actions could not be completed:", "\n".join(failures)])
@@ -325,9 +391,16 @@ async def handle_chat(
     # Watchlist first, so "add X and buy it" tracks the ticker before trading
     changes = [await _apply_watchlist_change(conn, source, c) for c in reply.watchlist_changes]
     trades = [await _apply_trade(conn, cache, source, t) for t in reply.trades]
-    message = _with_failures(reply.message, trades, changes)
+    message_id = new_id()
+    calls = [_record_prediction(conn, cache, source, p, message_id) for p in reply.predictions]
+    message = _with_failures(reply.message, changes, trades, calls)
 
-    actions = {"trades": trades, "watchlist_changes": changes, "tool_calls": tool_calls}
+    actions = {
+        "trades": trades,
+        "watchlist_changes": changes,
+        "predictions": calls,
+        "tool_calls": tool_calls,
+    }
     _store(conn, "user", user_message, None)
-    _store(conn, "assistant", message, actions)
+    _store(conn, "assistant", message, actions, message_id)
     return {"message": message, **actions}

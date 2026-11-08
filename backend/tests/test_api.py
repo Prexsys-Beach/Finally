@@ -266,9 +266,7 @@ class TestMarketBars:
     def test_unknown_ticker_has_no_bars(self, client):
         assert client.get("/api/market/bars/QQQQ", params={"timeframe": "1d"}).json()["bars"] == []
 
-    @pytest.mark.parametrize(
-        "params", [{"timeframe": "5m"}, {"limit": 0}, {"limit": 10001}]
-    )
+    @pytest.mark.parametrize("params", [{"timeframe": "5m"}, {"limit": 0}, {"limit": 10001}])
     def test_rejects_bad_parameters(self, client, params):
         assert client.get("/api/market/bars/AAPL", params=params).status_code == 422
 
@@ -300,7 +298,11 @@ class TestSettings:
 
     @pytest.mark.parametrize(
         "body",
-        [{"synthetic_history_cutoff": "decade"}, {"unknown": 1}, {"synthetic_history_cutoff": None}],
+        [
+            {"synthetic_history_cutoff": "decade"},
+            {"unknown": 1},
+            {"synthetic_history_cutoff": None},
+        ],
     )
     def test_rejects_invalid_changes(self, client, body):
         response = client.put("/api/settings", json=body)
@@ -350,3 +352,36 @@ class TestAnalytics:
     )
     def test_rejects_bad_parameters(self, client, path, params):
         assert client.get(path, params=params).status_code == 422
+
+
+class TestPredictionEndpoints:
+    def test_empty_journal(self, client):
+        assert client.get("/api/predictions").json() == {"predictions": []}
+        assert client.get("/api/predictions/stats").json() == {"modes": {}}
+
+    def test_stats_after_a_call(self, client):
+        from contextlib import closing
+
+        from app import predictions
+        from app.db import connect
+
+        with closing(connect(client.app.state.db_path)) as conn:
+            predictions.record(
+                conn,
+                client.app.state.price_cache,
+                client.app.state.market_source,
+                "AAPL",
+                "up",
+                0.7,
+                60,
+            )
+        stats = client.get("/api/predictions/stats").json()["modes"]["simulated"]
+        assert stats["assistant"]["pending"] == 1 and stats["baseline"]["pending"] == 1
+        assert (
+            client.get("/api/predictions", params={"limit": 1}).json()["predictions"][0]["ticker"]
+            == "AAPL"
+        )
+
+    @pytest.mark.parametrize("limit", [0, 501])
+    def test_rejects_bad_limits(self, client, limit):
+        assert client.get("/api/predictions", params={"limit": limit}).status_code == 422

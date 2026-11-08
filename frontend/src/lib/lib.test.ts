@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { api } from "./api";
 import { barPoints, bucketStart, extendLive, hasSynthetic, loadBars } from "./bars";
-import { formatMoney, formatPercent, formatSignedMoney, trendClass } from "./format";
+import { formatHorizon, formatMoney, formatPercent, formatSignedMoney, trendClass } from "./format";
 import { appendPoint, MAX_POINTS, toSeries } from "./history";
 import { livePortfolio } from "./portfolio";
 import { squarify } from "./treemap";
@@ -203,5 +203,15 @@ describe("bars", () => {
     expect(received).toEqual([10]);
     cancel();
     vi.useRealTimers();
+  });
+});
+
+describe("formatHorizon", () => {
+  it("reads naturally at every scale", () => {
+    expect(formatHorizon(30)).toBe("30 min");
+    expect(formatHorizon(60)).toBe("1 h");
+    expect(formatHorizon(90)).toBe("1.5 h");
+    expect(formatHorizon(1440)).toBe("1 d");
+    expect(formatHorizon(10080)).toBe("7 d");
   });
 });
