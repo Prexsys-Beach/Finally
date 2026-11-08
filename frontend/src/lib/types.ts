@@ -15,6 +15,29 @@ export interface PriceUpdate {
   day_change_percent: number | null;
 }
 
+export type Timeframe = "1m" | "1d";
+export type BarOrigin = "recorded" | "synthetic" | "vendor";
+
+export interface Bar {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  origin: BarOrigin;
+}
+
+export type HistoryCutoff = "never" | "day" | "week" | "month" | "quarter" | "year";
+
+export interface Settings {
+  synthetic_history_cutoff: HistoryCutoff;
+}
+
+export interface SettingsResponse {
+  settings: Settings;
+  choices: { [K in keyof Settings]: Settings[K][] };
+}
+
 export interface PricePoint {
   time: number;
   value: number;

@@ -52,3 +52,25 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     actions TEXT,
     created_at TEXT NOT NULL
 );
+
+-- Market data, not user data, so no user_id. start_ts is Unix seconds (UTC) because
+-- every query here is a time range. origin: recorded | synthetic | vendor.
+CREATE TABLE IF NOT EXISTS price_bars (
+    ticker TEXT NOT NULL,
+    timeframe TEXT NOT NULL CHECK (timeframe IN ('1m', '1d')),
+    start_ts INTEGER NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    origin TEXT NOT NULL CHECK (origin IN ('recorded', 'synthetic', 'vendor')),
+    PRIMARY KEY (ticker, timeframe, start_ts)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id TEXT NOT NULL DEFAULT 'default',
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, key)
+);

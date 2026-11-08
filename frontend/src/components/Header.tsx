@@ -1,5 +1,6 @@
 import { formatMoney, formatSignedMoney, trendClass } from "@/lib/format";
 import type { ConnectionStatus, DataMode, Portfolio } from "@/lib/types";
+import { SettingsMenu } from "./SettingsMenu";
 
 const CONNECTION: Record<ConnectionStatus, { label: string; color: string }> = {
   connected: { label: "Connected", color: "bg-up" },
@@ -54,6 +55,7 @@ export function Header({ portfolio, status, mode }: Props) {
           <span aria-hidden className={`size-2 rounded-full ${connection.color}`} />
           {connection.label}
         </span>
+        <SettingsMenu />
       </div>
     </header>
   );

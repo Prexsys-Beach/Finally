@@ -22,7 +22,7 @@ The user runs a single Docker command (or a provided start script). A browser op
 ### What the User Can Do
 
 - **Watch prices stream** — prices flash green (uptick) or red (downtick) with subtle CSS animations that fade
-- **View sparkline mini-charts** — price action beside each ticker in the watchlist, accumulated on the frontend from the SSE stream since page load (sparklines fill in progressively)
+- **View sparkline mini-charts** — the last hour of price action beside each ticker in the watchlist, from stored one-minute bars kept current by the SSE stream
 - **Click a ticker** to see a larger detailed chart in the main chart area
 - **Buy and sell shares** — market orders only, instant fill at current price, no fees, no confirmation dialog
 - **Monitor their portfolio** — a heatmap (treemap) showing positions sized by weight and colored by P&L, plus a P&L chart tracking total portfolio value over time
@@ -136,6 +136,12 @@ MASSIVE_POLL_INTERVAL=
 
 # Optional: Set to "true" for deterministic mock LLM responses (testing)
 LLM_MOCK=false
+
+# Optional: Days of one-minute history to backfill (default 5; 0 turns backfill off)
+HISTORY_BACKFILL_DAYS=
+
+# Optional: Days of one-minute bars to keep (default 30; daily bars are kept)
+HISTORY_RETENTION_DAYS=
 ```
 
 ### Behavior
@@ -181,6 +187,14 @@ See `planning/MASSIVE_API.md` and `planning/MARKET_INTERFACE.md` for details.
 - SSE streams read from this cache and push updates to connected clients
 - This architecture supports future multi-user scenarios without changes to the data layer
 
+### Price History
+
+- A background task records the cache's prices as one-minute OHLC bars, rolled up into daily bars, in the `price_bars` table. It reads the cache, so it works the same for every data source
+- On startup and when a ticker is added, history is backfilled before the earliest stored bar: 5 days of one-minute bars and a year of daily bars. With Massive prices it comes from Massive's aggregates; otherwise it is synthetic, generated with the simulator's drift, volatility and correlations so it ends exactly at the current price
+- Every bar records its origin (`recorded`, `synthetic` or `vendor`), and the UI labels charts that include synthetic history
+- A user setting decides when analysis stops using synthetic bars for a ticker: once real history covers a day, week, month (default), quarter or year, or never
+- See `planning/ANALYTICS_PLAN.md` for the analytics built on this history
+
 ### SSE Streaming
 
 - Endpoint: `GET /api/stream/prices`
@@ -203,7 +217,7 @@ The backend checks for the SQLite database on startup (or first request). If the
 
 ### Schema
 
-All tables include a `user_id` column defaulting to `"default"`. This is hardcoded for now (single-user) but enables future multi-user support without schema migration.
+All tables except `price_bars` include a `user_id` column defaulting to `"default"`. This is hardcoded for now (single-user) but enables future multi-user support without schema migration.
 
 **users_profile** — User state (cash balance)
 - `id` TEXT PRIMARY KEY (default: `"default"`)
@@ -241,6 +255,21 @@ All tables include a `user_id` column defaulting to `"default"`. This is hardcod
 - `total_value` REAL
 - `recorded_at` TEXT (ISO timestamp)
 
+**price_bars** — OHLC history per ticker. Market data, not user data, so this is the one table without `user_id`
+- `ticker` TEXT
+- `timeframe` TEXT (`"1m"` or `"1d"`)
+- `start_ts` INTEGER (Unix seconds, UTC bucket start; an integer because every query is a time range)
+- `open`, `high`, `low`, `close` REAL
+- `origin` TEXT (`"recorded"`, `"synthetic"` or `"vendor"`)
+- PRIMARY KEY `(ticker, timeframe, start_ts)`
+
+**user_settings** — User preferences, one row per setting
+- `user_id` TEXT (default: `"default"`)
+- `key` TEXT
+- `value` TEXT (JSON)
+- `updated_at` TEXT (ISO timestamp)
+- PRIMARY KEY `(user_id, key)`
+
 **chat_messages** — Conversation history with LLM
 - `id` TEXT PRIMARY KEY (UUID)
 - `user_id` TEXT (default: `"default"`)
@@ -262,6 +291,7 @@ All tables include a `user_id` column defaulting to `"default"`. This is hardcod
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/stream/prices` | SSE stream of live price updates |
+| GET | `/api/market/bars/{ticker}` | Recent bars, oldest first: `?timeframe=1m\|1d&limit=500`; each bar has its `origin` |
 
 ### Portfolio
 | Method | Path | Description |
@@ -287,6 +317,8 @@ All tables include a `user_id` column defaulting to `"default"`. This is hardcod
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Health check (for Docker/deployment) |
+| GET | `/api/settings` | All user settings with defaults filled in, plus each setting's allowed values |
+| PUT | `/api/settings` | Change settings: `{key: value}`. All or nothing; unknown keys or values return 400 |
 
 ---
 
@@ -363,8 +395,8 @@ When `LLM_MOCK=true`, the backend returns deterministic mock responses instead o
 
 The frontend is a single-page application with a dense, terminal-inspired layout. The specific component architecture and layout system is up to the Frontend Engineer, but the UI should include these elements:
 
-- **Watchlist panel** — grid/table of watched tickers with: ticker symbol, current price (flashing green/red on change), daily change %, and a sparkline mini-chart (accumulated from SSE since page load)
-- **Main chart area** — larger chart for the currently selected ticker, with at minimum price over time. Clicking a ticker in the watchlist selects it here.
+- **Watchlist panel** — grid/table of watched tickers with: ticker symbol, current price (flashing green/red on change), daily change %, and a sparkline mini-chart (the last hour of one-minute bars, extended live from SSE)
+- **Main chart area** — larger chart for the currently selected ticker, with ranges: Live (ticks since page load), 1D and 5D (one-minute bars), 1Y (daily bars). History ranges extend live from SSE and are labeled when they include simulated history. Clicking a ticker in the watchlist selects it here.
 - **Portfolio heatmap** — treemap visualization where each rectangle is a position, sized by portfolio weight, colored by P&L (green = profit, red = loss)
 - **P&L chart** — line chart showing total portfolio value over time, using data from `portfolio_snapshots`
 - **Positions table** — tabular view of all positions: ticker, quantity, avg cost, current price, unrealized P&L, % change

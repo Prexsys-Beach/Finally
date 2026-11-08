@@ -1,7 +1,7 @@
 """Tests for GBMSimulator."""
 
 from app.market.seed_prices import SEED_PRICES
-from app.market.simulator import GBMSimulator
+from app.market.simulator import GBMSimulator, pairwise_correlation
 
 
 class TestGBMSimulator:
@@ -96,24 +96,24 @@ class TestGBMSimulator:
 
     def test_pairwise_correlation_tech_stocks(self):
         """Test that tech stocks have high correlation."""
-        corr = GBMSimulator._pairwise_correlation("AAPL", "GOOGL")
+        corr = pairwise_correlation("AAPL", "GOOGL")
         assert corr == 0.6
 
     def test_pairwise_correlation_finance_stocks(self):
         """Test that finance stocks have moderate correlation."""
-        corr = GBMSimulator._pairwise_correlation("JPM", "V")
+        corr = pairwise_correlation("JPM", "V")
         assert corr == 0.5
 
     def test_pairwise_correlation_tsla(self):
         """Test that TSLA has lower correlation with everything."""
-        corr = GBMSimulator._pairwise_correlation("TSLA", "AAPL")
+        corr = pairwise_correlation("TSLA", "AAPL")
         assert corr == 0.3
-        corr = GBMSimulator._pairwise_correlation("TSLA", "JPM")
+        corr = pairwise_correlation("TSLA", "JPM")
         assert corr == 0.3
 
     def test_pairwise_correlation_cross_sector(self):
         """Test cross-sector correlation."""
-        corr = GBMSimulator._pairwise_correlation("AAPL", "JPM")
+        corr = pairwise_correlation("AAPL", "JPM")
         assert corr == 0.3
 
     def test_default_dt_is_reasonable(self):

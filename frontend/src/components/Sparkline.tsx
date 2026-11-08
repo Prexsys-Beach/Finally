@@ -2,7 +2,7 @@ import type { PricePoint } from "@/lib/types";
 
 const WIDTH = 64;
 const HEIGHT = 22;
-const MAX_POINTS = 120;
+const MAX_POINTS = 60; // The last hour of one-minute closes
 
 export function Sparkline({ points }: { points: PricePoint[] | undefined }) {
   const recent = points?.slice(-MAX_POINTS) ?? [];

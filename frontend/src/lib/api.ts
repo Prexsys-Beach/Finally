@@ -1,10 +1,14 @@
 import type {
+  Bar,
   ChatActions,
   ChatMessage,
   Health,
   Portfolio,
+  Settings,
+  SettingsResponse,
   Side,
   Snapshot,
+  Timeframe,
   Trade,
   WatchlistEntry,
 } from "./types";
@@ -45,4 +49,11 @@ export const api = {
     request<{ messages: ChatMessage[] }>("/api/chat").then((r) => r.messages),
   chat: (message: string) =>
     post<ChatActions & { message: string }>("/api/chat", { message }),
+  bars: (ticker: string, timeframe: Timeframe, limit: number) =>
+    request<{ bars: Bar[] }>(
+      `/api/market/bars/${encodeURIComponent(ticker)}?timeframe=${timeframe}&limit=${limit}`,
+    ).then((r) => r.bars),
+  settings: () => request<SettingsResponse>("/api/settings"),
+  updateSettings: (changes: Partial<Settings>) =>
+    request<SettingsResponse>("/api/settings", { method: "PUT", body: JSON.stringify(changes) }),
 };

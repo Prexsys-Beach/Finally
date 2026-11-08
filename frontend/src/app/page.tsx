@@ -43,7 +43,6 @@ export default function Home() {
         <Watchlist
           entries={watchlist}
           prices={prices}
-          history={history}
           selected={selected}
           onSelect={setPicked}
           onChange={refresh}

@@ -2,11 +2,12 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
-import type { Portfolio, PriceUpdate, WatchlistEntry } from "@/lib/types";
+import type { HistoryCutoff, Portfolio, PriceUpdate, WatchlistEntry } from "@/lib/types";
 import { useMarket } from "@/lib/useMarket";
 import { ChatPanel, Message } from "./ChatPanel";
 import { Header } from "./Header";
 import { Heatmap, tileColor, tileContent } from "./Heatmap";
+import { SettingsMenu } from "./SettingsMenu";
 import { PositionsTable } from "./PositionsTable";
 import { TradeBar } from "./TradeBar";
 import { Watchlist, WatchlistRow } from "./Watchlist";
@@ -75,7 +76,8 @@ describe("Watchlist", () => {
   const setup = () => {
     const onChange = vi.fn().mockResolvedValue(undefined);
     const onSelect = vi.fn();
-    render(<Watchlist entries={[entry]} prices={{}} history={{}} selected={null} onSelect={onSelect} onChange={onChange} />);
+    vi.spyOn(api, "bars").mockResolvedValue([]);
+    render(<Watchlist entries={[entry]} prices={{}} selected={null} onSelect={onSelect} onChange={onChange} />);
     return { onChange, onSelect };
   };
 
@@ -100,6 +102,29 @@ describe("Watchlist", () => {
     setup();
     await userEvent.type(screen.getByLabelText("Ticker to add"), "AAPL{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent("already on the watchlist");
+  });
+
+  it("draws sparklines from stored bars, kept current by live prices", async () => {
+    const bars = [100, 101, 102].map((close, i) => ({
+      time: 60 * i,
+      open: close,
+      high: close,
+      low: close,
+      close,
+      origin: "recorded" as const,
+    }));
+    vi.spyOn(api, "bars").mockResolvedValue(bars);
+    const props = { entries: [entry], selected: null, onSelect: vi.fn(), onChange: vi.fn() };
+    const { rerender } = render(<Watchlist {...props} prices={{}} />);
+    const segments = () =>
+      screen.getByTestId("sparkline").querySelector("path")?.getAttribute("d")?.split("L").length;
+    await waitFor(() => expect(segments()).toBe(3));
+
+    const live = { ...update(103), timestamp: 185 };
+    rerender(<Watchlist {...props} prices={{ AAPL: live }} />);
+    rerender(<Watchlist {...props} prices={{ AAPL: { ...live, price: 104 } }} />);
+    expect(segments()).toBe(4);
+    expect(api.bars).toHaveBeenCalledWith("AAPL", "1m", 60);
   });
 
   it("selects a ticker on click", async () => {
@@ -158,6 +183,50 @@ describe("Header", () => {
     expect(screen.getByTestId("cash-balance")).toHaveTextContent("$725.00");
     expect(screen.getByTestId("connection-status")).toHaveTextContent("Reconnecting");
     expect(screen.getByTestId("data-mode")).toHaveTextContent("Simulated prices");
+  });
+});
+
+describe("SettingsMenu", () => {
+  const response = (cutoff: HistoryCutoff) => ({
+    settings: { synthetic_history_cutoff: cutoff },
+    choices: { synthetic_history_cutoff: ["never", "day", "week", "month", "quarter", "year"] as HistoryCutoff[] },
+  });
+
+  it("loads on open and saves a change", async () => {
+    vi.spyOn(api, "settings").mockResolvedValue(response("month"));
+    const save = vi.spyOn(api, "updateSettings").mockResolvedValue(response("never"));
+    render(<SettingsMenu />);
+    expect(api.settings).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const select = screen.getByLabelText("Stop using simulated history after");
+    await waitFor(() => expect(select).toHaveValue("month"));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Never",
+      "1 day",
+      "1 week",
+      "1 month",
+      "1 quarter",
+      "1 year",
+    ]);
+
+    await userEvent.selectOptions(select, "never");
+    expect(save).toHaveBeenCalledWith({ synthetic_history_cutoff: "never" });
+    await waitFor(() => expect(select).toHaveValue("never"));
+  });
+
+  it("shows why a save failed and closes on Escape", async () => {
+    vi.spyOn(api, "settings").mockResolvedValue(response("month"));
+    vi.spyOn(api, "updateSettings").mockRejectedValue(new Error("Unknown setting"));
+    render(<SettingsMenu />);
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const select = screen.getByLabelText("Stop using simulated history after");
+    await waitFor(() => expect(select).toHaveValue("month"));
+    await userEvent.selectOptions(select, "day");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Unknown setting");
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByLabelText("Stop using simulated history after")).not.toBeInTheDocument();
   });
 });
 
