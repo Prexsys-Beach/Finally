@@ -1,5 +1,7 @@
 """Tests for GBMSimulator."""
 
+import pytest
+
 from app.market.seed_prices import SEED_PRICES
 from app.market.simulator import GBMSimulator, pairwise_correlation
 
@@ -129,3 +131,36 @@ class TestGBMSimulator:
         if '.' in price_str:
             decimal_part = price_str.split('.')[1]
             assert len(decimal_part) <= 2
+
+
+class TestRandomEvents:
+    """Jumps move prices 2-5% either way without pulling them down over time."""
+
+    def jumps(self, monkeypatch, moves):
+        """Prices after forced jumps of the given (size, sign) moves, with no GBM drift."""
+        sequence = iter(moves)
+        current = {}
+
+        def uniform(low, high):
+            current["move"] = next(sequence)
+            return current["move"][0]
+
+        monkeypatch.setattr("app.market.simulator.random.random", lambda: 0.0)
+        monkeypatch.setattr("app.market.simulator.random.uniform", uniform)
+        monkeypatch.setattr("app.market.simulator.random.choice", lambda _: current["move"][1])
+        sim = GBMSimulator(tickers=["AAPL"], dt=0.0, start_prices={"AAPL": 100.0})
+        return [sim.step()["AAPL"] for _ in moves], sim
+
+    def test_rise_and_drop_of_the_same_size_cancel(self, monkeypatch):
+        prices, sim = self.jumps(monkeypatch, [(0.03, 1), (0.03, -1)])
+        assert prices == [103.0, 100.0]
+        assert sim.get_price("AAPL") == 100.0
+
+    def test_drop_size(self, monkeypatch):
+        prices, _ = self.jumps(monkeypatch, [(0.05, -1)])
+        assert prices == [round(100 / 1.05, 2)]  # 95.24, a 4.8% drop
+
+    def test_no_drift_over_many_jumps(self, monkeypatch):
+        moves = [(0.02 + 0.03 * i / 999, sign) for i in range(1000) for sign in (1, -1)]
+        _, sim = self.jumps(monkeypatch, moves)
+        assert sim.get_price("AAPL") == pytest.approx(100.0)

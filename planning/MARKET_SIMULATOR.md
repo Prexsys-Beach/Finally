@@ -75,10 +75,13 @@ After the GBM step, each ticker has a 0.1% chance per tick of a shock:
 if random.random() < self._event_prob:
     shock_magnitude = random.uniform(0.02, 0.05)
     shock_sign = random.choice([-1, 1])
-    self._prices[ticker] *= 1 + shock_magnitude * shock_sign
+    factor = 1 + shock_magnitude
+    self._prices[ticker] *= factor if shock_sign > 0 else 1 / factor
 ```
 
 With 10 tickers at 2 ticks a second, that predicts one event every 50 seconds. We measured one every 49 seconds. Events are independent, so one ticker jumps alone.
+
+A drop divides by the factor a rise multiplies by, so equal-sized moves cancel and events don't move prices up or down on average. The original `*= 1 + shock_magnitude * shock_sign` pulled prices down: +3% then -3% leaves 99.91, and at about 170 events per ticker per day that compounds to roughly 11% a day.
 
 ### Parameters
 
@@ -263,15 +266,9 @@ Both are part of the wider plan in `MARKET_INTERFACE.md`.
 
 ## Optional Tuning
 
-Neither of these is needed for the demo, so leave them unless long sessions look wrong.
+This isn't needed for the demo, so leave it unless long sessions look wrong.
 
 **Calm the events** by lowering `event_probability` in `SimulatorDataSource`. `0.0003` keeps regular drama, and it restores some difference between calm and volatile tickers.
-
-**Remove the downward pull** by making shocks symmetric in log terms:
-
-```python
-self._prices[ticker] *= math.exp(shock_magnitude * shock_sign)
-```
 
 ## Testing
 
@@ -281,6 +278,7 @@ The tests in `backend/tests/market/test_simulator.py` and `test_simulator_source
 - Add and remove rebuild the matrix, including going down to one ticker and to none.
 - The Cholesky build succeeds for the full default set plus many unknown tickers.
 - `event_probability=0` produces no moves beyond GBM scale.
+- A rise and a drop of the same size cancel exactly, so events add no drift.
 - Measured correlations match the targets on a large sample.
 - Mixed-case tickers don't create duplicates.
 
