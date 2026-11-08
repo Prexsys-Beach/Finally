@@ -76,7 +76,8 @@ Prices can be `None`, for example just after startup, so handle that. Follow the
 ### Analytics
 
 - `app/analytics/indicators.py` and `risk.py` — pure numpy functions. Indicators are causal (no look-ahead; `tests/analytics/test_indicators.py` checks it by truncation) and return NaN through their warm-up
-- `app/analytics/service.py` — `ticker_analytics()` and `portfolio_analytics()`: read bars through `bars_for_analysis()` so the synthetic-history cutoff applies, and report the bar origins they used. Phase 3's assistant tools should call these rather than the math directly
+- `app/analytics/forecast.py` — Monte Carlo math: covariance from one-minute returns scaled per second of trading, paths with no expected return, percentile bands. Horizons map to trading time by data mode (the simulator trades around the clock; real markets about 6.5 hours a day)
+- `app/analytics/service.py` — `ticker_analytics()`, `portfolio_analytics()` and `forecast()`: read bars through `bars_for_analysis()` so the synthetic-history cutoff applies, and report the bar origins they used. Phase 3's assistant tools should call these rather than the math directly
 
 ### SSE Streaming
 

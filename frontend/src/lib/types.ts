@@ -243,3 +243,23 @@ export interface PredictionScore {
 export interface PredictionStats {
   modes: Partial<Record<DataMode, { assistant: PredictionScore; baseline: PredictionScore }>>;
 }
+
+export type ForecastHorizon = "1h" | "1d" | "1w";
+
+export interface Forecast {
+  target: string;
+  horizon: ForecastHorizon;
+  horizon_label: string;
+  data_mode: DataMode;
+  as_of: number;
+  current_value: number;
+  times: number[];
+  bands: Record<"p5" | "p25" | "p50" | "p75" | "p95", number[]>;
+  probability_of_loss: number;
+  expected_shortfall_5: number;
+  volatility: number | null;
+  returns_used: number;
+  origins: Partial<Record<BarOrigin, number>>;
+  paths: number;
+  notes: string[];
+}

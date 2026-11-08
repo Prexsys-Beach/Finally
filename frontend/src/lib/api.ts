@@ -4,6 +4,8 @@ import type {
   ChatMessage,
   Health,
   Portfolio,
+  Forecast,
+  ForecastHorizon,
   PortfolioAnalytics,
   PredictionRecord,
   PredictionStats,
@@ -67,6 +69,10 @@ export const api = {
       (r) => r.predictions,
     ),
   predictionStats: () => request<PredictionStats>("/api/predictions/stats"),
+  forecast: (target: string, horizon: ForecastHorizon) =>
+    request<Forecast>(
+      `/api/analytics/forecast?target=${encodeURIComponent(target)}&horizon=${horizon}`,
+    ),
   portfolioAnalytics: (timeframe: Timeframe = "1d") =>
     request<PortfolioAnalytics>(`/api/analytics/portfolio?timeframe=${timeframe}`),
   updateSettings: (changes: Partial<Settings>) =>

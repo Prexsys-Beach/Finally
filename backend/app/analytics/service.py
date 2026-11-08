@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import math
 import sqlite3
+import time
+import zlib
 from collections import Counter
 from datetime import datetime
 
@@ -21,6 +23,7 @@ from ..market.simulator import GBMSimulator
 from ..portfolio import get_portfolio
 from ..settings import synthetic_cutoff_days
 from ..watchlist import get_watchlist
+from . import forecast as fc
 from . import indicators as ind
 from . import risk
 
@@ -311,3 +314,107 @@ def portfolio_analytics(
         ],
     }
     return result
+
+
+# --- Forecasts ---
+
+FORECAST_LOOKBACK = 2000  # One-minute bars: about 5 trading days, or 1.4 simulator days
+MIN_FORECAST_RETURNS = 30
+
+
+def _forecast_rng(target: str, horizon: str, now: float) -> np.random.Generator:
+    """Seeded by target, horizon and the minute, so a refresh within a minute
+    shows the same fan rather than a jittering one."""
+    return np.random.default_rng(zlib.crc32(f"{target}:{horizon}:{int(now // 60)}".encode()))
+
+
+def forecast(
+    conn: sqlite3.Connection,
+    cache: PriceCache,
+    target: str,
+    horizon: str,
+    retention_days: float,
+    mode: DataMode = "simulated",
+    level: float | None = None,
+    now: float | None = None,
+    rng: np.random.Generator | None = None,
+) -> dict:
+    """Percentile bands for a ticker's price or the portfolio's value over a horizon.
+
+    target is "portfolio" or a ticker. Positions without enough history are held
+    at today's price and named in the notes. Raises ValueError for a ticker with
+    no price.
+    """
+    now = time.time() if now is None else now
+    rng = rng or _forecast_rng(target, horizon, now)
+    spec = fc.HORIZONS[horizon]
+    notes: list[str] = []
+
+    if target == "portfolio":
+        portfolio = get_portfolio(conn, cache)
+        quantities = {
+            p["ticker"]: p["quantity"] for p in portfolio["positions"] if p["current_price"]
+        }
+        fixed = portfolio["cash_balance"] + sum(
+            p["cost_basis"] for p in portfolio["positions"] if not p["current_price"]
+        )
+        current = portfolio["total_value"]
+    else:
+        price = cache.get_price(target)
+        if price is None:
+            raise ValueError(f"No price for {target}.")
+        quantities, fixed, current = {target: 1.0}, 0.0, price
+
+    used: Counter = Counter()
+    closes = {}
+    for ticker in quantities:
+        bars = _bars(conn, ticker, "1m", FORECAST_LOOKBACK + 1, retention_days)
+        used.update(bar.origin for bar in bars)
+        closes[ticker] = [(bar.start_ts, bar.close) for bar in bars]
+    est = fc.estimate(closes) if quantities else fc.Estimate([], np.empty((0, 0)), 0)
+
+    if quantities and est.returns < MIN_FORECAST_RETURNS:
+        notes.append("Not enough price history to forecast yet.")
+        modeled: list[str] = []
+    else:
+        modeled = est.tickers
+    held_flat = [t for t in quantities if t not in modeled]
+    if target == "portfolio" and not quantities:
+        notes.append("Only cash: the value won't change.")
+    elif held_flat and modeled:
+        notes.append(f"Held at today's price for lack of history: {', '.join(held_flat)}.")
+
+    flat_value = fixed + sum(quantities[t] * cache.get_price(t) for t in held_flat)
+    if modeled:
+        prices = np.array([cache.get_price(t) for t in modeled])
+        index = [est.tickers.index(t) for t in modeled]
+        covariance = est.covariance_per_second[np.ix_(index, index)]
+        seconds = fc.trading_seconds(horizon, mode)
+        paths = fc.simulate(prices, covariance, seconds, rng)
+        holdings = np.array([quantities[t] for t in modeled])
+        values = flat_value + paths @ holdings
+        weights = holdings * prices / current if current else holdings * 0
+        volatility = fc.annualized_volatility(
+            float(weights @ covariance @ weights), GBMSimulator.TRADING_SECONDS_PER_YEAR
+        )
+    else:
+        values = np.full((1, fc.CHECKPOINTS), flat_value)
+        volatility = 0.0
+
+    summary = fc.summarize(values, current, level)
+    step = spec.wall_seconds / fc.CHECKPOINTS
+    return {
+        "target": target,
+        "horizon": horizon,
+        "horizon_label": spec.label,
+        "data_mode": mode,
+        "as_of": int(now),
+        "current_value": round(current, 2),
+        "times": [int(now + step * (i + 1)) for i in range(fc.CHECKPOINTS)],
+        **summary,
+        "volatility": _number(volatility, 6),
+        "returns_used": est.returns,
+        "origins": dict(used),
+        "paths": int(values.shape[0]),
+        "notes": notes,
+    }

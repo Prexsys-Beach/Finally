@@ -53,6 +53,7 @@ class TestTools:
             "get_indicators",
             "get_bars",
             "get_portfolio_risk",
+            "run_forecast",
             "get_prediction_record",
             "get_correlations",
         ]
@@ -99,6 +100,26 @@ class TestTools:
         assert result["modes"]["simulated"]["assistant"]["pending"] == 1
         assert result["latest"][0]["ticker"] == "AAPL" and result["latest"][0]["outcome"] is None
 
+    def test_forecast_gives_the_end_of_the_fan(self, ctx):
+        result, record = call(ctx, "run_forecast", target="Portfolio", horizon="1w", level=11000)
+        assert record["status"] == "ok"
+        assert result["target"] == "portfolio" and result["horizon_label"] == "1 week"
+        assert set(result["at_horizon"]) == {"p5", "p25", "p50", "p75", "p95"}
+        assert "times" not in result and "bands" not in result
+        assert result["level"]["price"] == 11000
+
+    @pytest.mark.parametrize(
+        ("arguments", "error"),
+        [
+            ({"target": "AAPL", "horizon": "1y"}, "horizon must be one of"),
+            ({"target": "AAPL", "level": -1}, "level must be a positive number"),
+            ({"target": "ZZZZ"}, "No price for ZZZZ."),
+        ],
+    )
+    def test_forecast_errors(self, ctx, arguments, error):
+        content, record = tools.run(ctx, "run_forecast", json.dumps(arguments))
+        assert error in json.loads(content)["error"] and record["status"] == "failed"
+
     def test_tools_never_write(self, ctx):
         before = ctx.conn.total_changes
         for name, args in [
@@ -107,6 +128,7 @@ class TestTools:
             ("get_portfolio_risk", {}),
             ("get_correlations", {}),
             ("get_prediction_record", {}),
+            ("run_forecast", {"target": "AAPL"}),
         ]:
             call(ctx, name, **args)
         assert ctx.conn.total_changes == before

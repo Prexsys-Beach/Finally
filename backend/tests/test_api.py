@@ -385,3 +385,45 @@ class TestPredictionEndpoints:
     @pytest.mark.parametrize("limit", [0, 501])
     def test_rejects_bad_limits(self, client, limit):
         assert client.get("/api/predictions", params={"limit": limit}).status_code == 422
+
+
+class TestForecastEndpoint:
+    def test_portfolio_forecast_with_cash_only(self, client):
+        body = client.get("/api/analytics/forecast").json()
+        assert body["target"] == "portfolio" and body["horizon"] == "1d"
+        assert body["current_value"] == 10000.0
+        assert len(body["times"]) == len(body["bands"]["p50"]) == 24
+
+    def test_ticker_forecast_and_level(self, client):
+        from contextlib import closing
+
+        from app.db import connect
+        from app.market.bars import Bar, insert_bars
+
+        start = recent_minute() - 200 * 60
+        with closing(connect(client.app.state.db_path)) as conn:
+            insert_bars(
+                conn,
+                [
+                    Bar(
+                        "AAPL", "1m", start + i * 60, 190 + (i % 7), 0, 0, 190 + (i % 7), "recorded"
+                    )
+                    for i in range(200)
+                ],
+            )
+        body = client.get(
+            "/api/analytics/forecast", params={"target": "aapl", "horizon": "1h", "level": 500}
+        ).json()
+        assert body["target"] == "AAPL" and body["level"]["direction"] == "above"
+
+    @pytest.mark.parametrize(
+        ("params", "status"),
+        [
+            ({"horizon": "1y"}, 422),
+            ({"level": -5}, 422),
+            ({"target": "not a ticker"}, 422),
+            ({"target": "ZZZZ"}, 404),
+        ],
+    )
+    def test_rejects_bad_requests(self, client, params, status):
+        assert client.get("/api/analytics/forecast", params=params).status_code == status

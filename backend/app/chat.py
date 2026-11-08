@@ -46,9 +46,10 @@ immediately at the current price, with no confirmation step.
 - Only list an action if you intend it to run now. Never list a trade you are merely suggesting.
 - Before making claims about trends, momentum, volatility, correlation or risk, look them \
 up with your tools, and cite the numbers you used. Tools only read data; they never trade.
-- Whenever you state a view on where a price will go, record it in "predictions": \
-ticker, direction (up or down), your honest confidence from 0.5 (a coin flip) to 1.0 \
-(certain), and a horizon in minutes (1 to 10080). If the user asks for a prediction, \
+- Whenever you state your own view on which way a price will go, record it in \
+"predictions" (describing a forecast's range or odds is not a view of your own, so \
+don't record those): ticker, direction (up or down), your honest confidence from \
+0.5 (a coin flip) to 1.0 (certain), and a horizon in minutes (1 to 10080). If the user asks for a prediction, \
 give one and record it: never decline. Every prediction is scored against a coin flip, \
 so overconfidence costs you. When market_data_mode is "simulated" or "seeded", say in \
 your message that the prices are simulated and the call is close to a coin flip, and \
@@ -249,13 +250,16 @@ async def _research(messages: list[dict], tools: assistant_tools.ToolContext) ->
 
 def _mock_tools(message: str, tools: assistant_tools.ToolContext) -> list[dict]:
     """Deterministic lookups for LLM_MOCK=true: 'analyze NVDA' reads its indicators,
-    and any mention of risk reads portfolio risk. The tools really run."""
+    any mention of risk reads portfolio risk, and 'forecast' runs a one-day
+    portfolio forecast. The tools really run."""
     requests = [
         ("get_indicators", {"ticker": ticker})
         for ticker in re.findall(r"\banaly[sz]e\s+([A-Za-z.\-]+)", message, re.IGNORECASE)
     ]
     if re.search(r"\brisk", message, re.IGNORECASE):
         requests.append(("get_portfolio_risk", {}))
+    if re.search(r"\bforecast", message, re.IGNORECASE):
+        requests.append(("run_forecast", {"target": "portfolio", "horizon": "1d"}))
     return [assistant_tools.run(tools, name, json.dumps(args))[1] for name, args in requests]
 
 

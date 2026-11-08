@@ -201,6 +201,14 @@ Statistical models such as ARIMA are deferred. On simulated data they can only f
 
 **Tests**: on paths generated with known `sigma`, the forecast's spread matches theory within tolerance; seeded runs are reproducible; the portfolio forecast with only cash is flat.
 
+**As built**:
+- Volatility and correlation come from up to 2,000 one-minute returns (through the synthetic-history cutoff), scaled to one second of trading. A minute is a minute of trading in the simulator and in market hours, so one estimate serves every source. The plan's separate jump model was dropped: measured returns already contain the jumps, so adding one would count them twice, and over many minutes their sum is close to normal.
+- Paths are correlated geometric Brownian motion with no expected return (each price's mean stays at today's), 5,000 paths at 24 checkpoints, seeded per minute so a refresh doesn't jitter the fan.
+- Horizons are 1h, 1d and 1w of clock time. The simulator trades around the clock, so that is also trading time; for real data they cover 1 hour, 1 and 5 trading days.
+- The portfolio forecast counts cash, and positions without enough history are held at today's price and named in the notes. "Probability of touching" a level is checked at the 24 checkpoints, so it slightly understates touches between them.
+- `run_forecast` tool (returns the end of the fan, not every checkpoint). The fan is drawn on the P&L chart only; ticker forecasts are available through the API and the tool.
+- Live check: asked the range for the next day, the model ran a portfolio forecast and quoted the 5th and 95th percentiles and the 51% chance of a loss. Asked the odds of NVDA reaching $850 this week, it first estimated from percentiles and recorded a stray prediction; the tool description now says to pass the price as `level`, and the prompt says describing odds isn't a prediction. After that it passed the level and recorded nothing.
+
 ### Phase 5 — Prediction Journal
 
 **Schema**:
