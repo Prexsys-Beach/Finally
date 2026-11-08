@@ -293,6 +293,12 @@ All tables except `price_bars` include a `user_id` column defaulting to `"defaul
 | GET | `/api/stream/prices` | SSE stream of live price updates |
 | GET | `/api/market/bars/{ticker}` | Recent bars, oldest first: `?timeframe=1m\|1d&limit=500`; each bar has its `origin` |
 
+### Analytics
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/analytics/ticker/{ticker}` | Indicators over the last `limit` bars (`?timeframe=1m\|1d&limit=500`): series for chart overlays, latest values and signals |
+| GET | `/api/analytics/portfolio` | Portfolio risk (`?timeframe=1d\|1m`): volatility, beta vs the watchlist, 1-day 95% VaR and expected shortfall, concentration, drawdown, Sharpe, correlation matrix, and the bar origins used |
+
 ### Portfolio
 | Method | Path | Description |
 |--------|------|-------------|
@@ -396,8 +402,8 @@ When `LLM_MOCK=true`, the backend returns deterministic mock responses instead o
 The frontend is a single-page application with a dense, terminal-inspired layout. The specific component architecture and layout system is up to the Frontend Engineer, but the UI should include these elements:
 
 - **Watchlist panel** — grid/table of watched tickers with: ticker symbol, current price (flashing green/red on change), daily change %, and a sparkline mini-chart (the last hour of one-minute bars, extended live from SSE)
-- **Main chart area** — larger chart for the currently selected ticker, with ranges: Live (ticks since page load), 1D and 5D (one-minute bars), 1Y (daily bars). History ranges extend live from SSE and are labeled when they include simulated history. Clicking a ticker in the watchlist selects it here.
-- **Portfolio heatmap** — treemap visualization where each rectangle is a position, sized by portfolio weight, colored by P&L (green = profit, red = loss)
+- **Main chart area** — larger chart for the currently selected ticker, with ranges: Live (ticks since page load), 1D and 5D (one-minute bars), 1Y (daily bars). History ranges extend live from SSE and are labeled when they include simulated history. Indicator toggles add SMA 20, EMA 50 and Bollinger Bands to the price, and RSI and MACD in panes below. Clicking a ticker in the watchlist selects it here.
+- **Portfolio heatmap** — treemap visualization where each rectangle is a position, sized by portfolio weight, colored by P&L (green = profit, red = loss). The panel toggles to a **Risk** view: volatility, beta, VaR, expected shortfall, concentration, drawdown, Sharpe and a correlation grid
 - **P&L chart** — line chart showing total portfolio value over time, using data from `portfolio_snapshots`
 - **Positions table** — tabular view of all positions: ticker, quantity, avg cost, current price, unrealized P&L, % change
 - **Trade bar** — simple input area: ticker field, quantity field, buy button, sell button. Market orders, instant fill.

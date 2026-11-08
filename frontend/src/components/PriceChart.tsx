@@ -2,11 +2,14 @@
 
 import { createChart, type IChartApi, type ISeriesApi, LineSeries, type UTCTimestamp } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
+import { api } from "@/lib/api";
 import { barPoints, bucketStart, hasSynthetic, TIMEFRAME_SECONDS } from "@/lib/bars";
 import { formatMoney, formatPercent, trendClass } from "@/lib/format";
-import type { PricePoint, PriceUpdate, Timeframe } from "@/lib/types";
+import type { IndicatorSeries, PricePoint, PriceUpdate, Timeframe } from "@/lib/types";
 import { useBars } from "@/lib/useBars";
+import { useStored } from "@/lib/useStored";
 import { chartOptions, timeOptions } from "./chartOptions";
+import { drawOverlays, isOverlayList, OVERLAYS, type OverlayId } from "./overlays";
 
 /** Live: ticks since page load. The others: stored history, extended by ticks. */
 export const RANGES = {
@@ -25,6 +28,32 @@ interface Props {
   update: PriceUpdate | undefined;
 }
 
+const ANALYTICS_REFRESH_MS = 60000;
+
+/** Indicator series matching the chart's bars, refreshed as new bars close. */
+function useIndicators(ticker: string | null, timeframe: Timeframe, limit: number, enabled: boolean) {
+  const key = enabled && ticker ? `${ticker}:${timeframe}:${limit}` : null;
+  const [loaded, setLoaded] = useState<{ key: string; series: IndicatorSeries | null } | null>(null);
+
+  useEffect(() => {
+    if (!key || !ticker) return;
+    let cancelled = false;
+    const load = () =>
+      api.tickerAnalytics(ticker, timeframe, limit).then(
+        (result) => !cancelled && setLoaded({ key, series: result.series }),
+        () => undefined, // Keep what is shown; the next refresh retries
+      );
+    void load();
+    const timer = setInterval(() => void load(), ANALYTICS_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [key]); // key covers ticker, timeframe and limit
+
+  return loaded?.key === key ? loaded.series : null;
+}
+
 const asChartPoint = (point: PricePoint) => ({
   time: point.time as UTCTimestamp,
   value: point.value,
@@ -36,9 +65,24 @@ export function PriceChart({ ticker, points, update }: Props) {
   const series = useRef<ISeriesApi<"Line"> | null>(null);
   const lastTime = useRef(0);
   const [range, setRange] = useState<Range>(DEFAULT_RANGE);
+  const [overlays, setOverlays] = useStored<OverlayId[]>("finally.overlays", [], isOverlayList);
 
   const history = RANGES[range];
   const bars = useBars(history ? ticker : null, history?.timeframe ?? "1m", history?.limit ?? 0);
+  const indicators = useIndicators(
+    ticker,
+    history?.timeframe ?? "1m",
+    history?.limit ?? 0,
+    Boolean(history) && overlays.length > 0,
+  );
+
+  useEffect(() => {
+    if (!chart.current || !indicators || !history) return;
+    return drawOverlays(chart.current, indicators, overlays);
+  }, [indicators, overlays, history]);
+
+  const toggleOverlay = (id: OverlayId) =>
+    setOverlays(overlays.includes(id) ? overlays.filter((o) => o !== id) : [...overlays, id]);
 
   useEffect(() => {
     if (!container.current) return;
@@ -103,7 +147,25 @@ export function PriceChart({ ticker, points, update }: Props) {
             Includes simulated history
           </span>
         )}
-        <div role="group" aria-label="Chart range" className="ml-auto flex self-center text-xs">
+        <div role="group" aria-label="Indicators" className="ml-auto flex self-center text-xs">
+          {OVERLAYS.map((overlay) => (
+            <button
+              key={overlay.id}
+              type="button"
+              title={history ? overlay.title : "Indicators need a 1D, 5D or 1Y range"}
+              disabled={!history}
+              aria-pressed={overlays.includes(overlay.id)}
+              onClick={() => toggleOverlay(overlay.id)}
+              className={`-ml-px flex items-center gap-1 border border-line px-2 py-0.5 first:ml-0 disabled:opacity-40 ${
+                overlays.includes(overlay.id) ? "bg-raised text-ink" : "text-muted hover:text-ink"
+              }`}
+            >
+              <span aria-hidden className="size-2 rounded-full" style={{ background: overlay.color }} />
+              {overlay.label}
+            </button>
+          ))}
+        </div>
+        <div role="group" aria-label="Chart range" className="flex self-center text-xs">
           {(Object.keys(RANGES) as Range[]).map((name) => (
             <button
               key={name}
