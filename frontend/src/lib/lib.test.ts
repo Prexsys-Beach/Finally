@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { api } from "./api";
+import { barPoints, bucketStart, extendLive, hasSynthetic, loadBars } from "./bars";
 import { formatMoney, formatPercent, formatSignedMoney, trendClass } from "./format";
 import { appendPoint, MAX_POINTS, toSeries } from "./history";
 import { livePortfolio } from "./portfolio";
 import { squarify } from "./treemap";
-import type { Portfolio, PricePoint, PriceUpdate } from "./types";
+import type { Bar, Portfolio, PricePoint, PriceUpdate } from "./types";
 
 describe("format", () => {
   it("never shows a sign or a color on a value that rounds to zero", () => {
@@ -136,5 +138,70 @@ describe("livePortfolio", () => {
 
   it("keeps server values when a price is missing", () => {
     expect(livePortfolio(portfolio, {}).total_value).toBe(10000);
+  });
+});
+
+describe("bars", () => {
+  const bar = (time: number, close: number, origin: Bar["origin"] = "recorded"): Bar => ({
+    time,
+    open: close,
+    high: close,
+    low: close,
+    close,
+    origin,
+  });
+
+  it("buckets times like the server", () => {
+    expect(bucketStart(125.7, 60)).toBe(120);
+    expect(bucketStart(86399, 86400)).toBe(0);
+  });
+
+  it("charts closing prices and spots simulated history", () => {
+    const bars = [bar(0, 10, "synthetic"), bar(60, 11)];
+    expect(barPoints(bars)).toEqual([{ time: 0, value: 10 }, { time: 60, value: 11 }]);
+    expect(hasSynthetic(bars)).toBe(true);
+    expect(hasSynthetic(bars.slice(1))).toBe(false);
+  });
+
+  it("extends with live prices: same bucket updates, next bucket appends, older is ignored", () => {
+    const points: PricePoint[] = [{ time: 60, value: 10 }];
+    extendLive(points, 90, 11, 60);
+    expect(points).toEqual([{ time: 60, value: 11 }]);
+    extendLive(points, 125, 12, 60);
+    extendLive(points, 30, 99, 60);
+    expect(points).toEqual([{ time: 60, value: 11 }, { time: 120, value: 12 }]);
+    extendLive(points, 200, 13, 60, 2);
+    expect(points.map((p) => p.time)).toEqual([120, 180]);
+  });
+
+  it("retries while history is still being filled, and stops when cancelled", async () => {
+    vi.useFakeTimers();
+    const fetch = vi
+      .spyOn(api, "bars")
+      .mockResolvedValueOnce([bar(0, 1)])
+      .mockResolvedValueOnce(Array.from({ length: 10 }, (_, i) => bar(i * 60, i)));
+    const received: number[] = [];
+    const cancel = loadBars("AAPL", "1m", 60, (bars) => received.push(bars.length));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(received).toEqual([1]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(received).toEqual([1, 10]);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    cancel();
+    vi.useRealTimers();
+  });
+
+  it("retries after a failed request", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(api, "bars").mockRejectedValueOnce(new Error("down")).mockResolvedValue(
+      Array.from({ length: 10 }, (_, i) => bar(i * 60, i)),
+    );
+    const received: number[] = [];
+    const cancel = loadBars("AAPL", "1m", 60, (bars) => received.push(bars.length));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(received).toEqual([10]);
+    cancel();
+    vi.useRealTimers();
   });
 });

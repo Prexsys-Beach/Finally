@@ -223,3 +223,80 @@ class TestPriceStream:
     def test_route_is_registered(self, client):
         paths = [route.path for route in client.app.routes]
         assert paths.count("/api/stream/prices") == 1
+
+
+class TestMarketBars:
+    def test_returns_stored_bars_oldest_first(self, client):
+        from contextlib import closing
+
+        from app.db import connect
+        from app.market.bars import Bar, insert_bars
+
+        start = 1_700_006_400
+        with closing(connect(client.app.state.db_path)) as conn:
+            insert_bars(
+                conn,
+                [
+                    Bar("ZZZ", "1m", start + i * 60, 10.0, 11.0, 9.0, 10.5, "synthetic")
+                    for i in range(3)
+                ],
+            )
+        body = client.get("/api/market/bars/zzz", params={"limit": 2}).json()
+        assert body["ticker"] == "ZZZ"
+        assert body["timeframe"] == "1m"
+        assert body["bars"] == [
+            {
+                "time": start + i * 60,
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.0,
+                "close": 10.5,
+                "origin": "synthetic",
+            }
+            for i in (1, 2)
+        ]
+
+    def test_unknown_ticker_has_no_bars(self, client):
+        assert client.get("/api/market/bars/QQQQ", params={"timeframe": "1d"}).json()["bars"] == []
+
+    @pytest.mark.parametrize(
+        "params", [{"timeframe": "5m"}, {"limit": 0}, {"limit": 10001}]
+    )
+    def test_rejects_bad_parameters(self, client, params):
+        assert client.get("/api/market/bars/AAPL", params=params).status_code == 422
+
+    def test_rejects_bad_ticker(self, client):
+        assert client.get("/api/market/bars/not a ticker").status_code == 422
+
+
+class TestSettings:
+    def test_defaults(self, client):
+        body = client.get("/api/settings").json()
+        assert body["settings"] == {"synthetic_history_cutoff": "month"}
+        assert body["choices"]["synthetic_history_cutoff"] == [
+            "never",
+            "day",
+            "week",
+            "month",
+            "quarter",
+            "year",
+        ]
+
+    def test_update_persists(self, client):
+        body = client.put("/api/settings", json={"synthetic_history_cutoff": "never"}).json()
+        assert body["settings"]["synthetic_history_cutoff"] == "never"
+        assert client.get("/api/settings").json()["settings"]["synthetic_history_cutoff"] == "never"
+
+    @pytest.mark.parametrize(
+        "body",
+        [{"synthetic_history_cutoff": "decade"}, {"unknown": 1}, {"synthetic_history_cutoff": None}],
+    )
+    def test_rejects_invalid_changes(self, client, body):
+        response = client.put("/api/settings", json=body)
+        assert response.status_code == 400
+        assert client.get("/api/settings").json()["settings"]["synthetic_history_cutoff"] == "month"
+
+    def test_invalid_change_saves_nothing(self, client):
+        body = {"synthetic_history_cutoff": "day", "unknown": 1}
+        assert client.put("/api/settings", json=body).status_code == 400
+        assert client.get("/api/settings").json()["settings"]["synthetic_history_cutoff"] == "month"

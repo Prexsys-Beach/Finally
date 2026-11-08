@@ -27,6 +27,7 @@ API docs are at `http://localhost:8000/docs`. The database is created and seeded
 - `app/portfolio.py` — valuation, trades, snapshots. Use `place_trade()` for every trade, including LLM trades, so validation and ticker tracking stay in one place
 - `app/watchlist.py` — watchlist rules, plus `tracked_tickers()` and `release_ticker()`
 - `app/chat.py` — LLM chat. Auto-executes through `place_trade()` and the watchlist functions. Set `LLM_MOCK=true` for deterministic replies: `buy 5 AAPL`, `sell 1 MSFT`, `add PYPL`, `remove NFLX`
+- `app/settings.py` — user settings: allowed values, defaults, storage
 - `app/routes/` — HTTP layer only
 
 Routes are `async` and call SQLite directly on the event loop. Queries are small and local, so this is fine for a single user, and it serializes writes.
@@ -57,6 +58,18 @@ from app.market import create_market_data_source, normalize_ticker
 - **`create_market_data_source(cache)`** — Factory. Returns `MassiveDataSource` if `MASSIVE_API_KEY` is set, otherwise `SimulatorDataSource`. `MASSIVE_POLL_INTERVAL` sets the Massive poll seconds (default 15).
 
 Prices can be `None`, for example just after startup, so handle that. Follow the "Integration Rules" in `planning/MARKET_INTERFACE.md`, especially tracking watchlist and open positions together. In Massive tests, build snapshots from real models rather than `MagicMock`.
+
+### Price History
+
+- `app/market/bars.py` — `Bar` (OHLC with `origin`: `recorded`, `synthetic` or `vendor`), storage helpers, and `bars_for_analysis()`, which drops synthetic bars once real history covers the user's cutoff (`app/settings.py`, `synthetic_cutoff_days()`)
+- `app/market/history.py` — `HistoryProvider` for backfill: `SyntheticHistory` (the simulator's model, ending at the current price) and `MassiveHistory` (aggregates). A new data vendor is one more provider
+- `app/market/recorder.py` — `HistoryService`, started in the lifespan: samples the `PriceCache` every second into one-minute bars (folded into daily bars as it goes), backfills before the earliest stored bar for each new ticker, and prunes one-minute bars past `HISTORY_RETENTION_DAYS`. Its database work runs on one worker thread
+- `create_history_service(db_path, cache)` picks the provider: Massive when prices are real Massive prices, otherwise synthetic (including `MASSIVE_SEED_SIMULATOR`)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HISTORY_BACKFILL_DAYS` | 5 | Days of one-minute history to backfill; 0 turns backfill off |
+| `HISTORY_RETENTION_DAYS` | 30 | Days of one-minute bars to keep |
 
 ### SSE Streaming
 

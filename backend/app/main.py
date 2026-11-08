@@ -15,9 +15,14 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .db import connect, database_path, init_db
-from .market import PriceCache, create_market_data_source, create_stream_router
+from .market import (
+    PriceCache,
+    create_history_service,
+    create_market_data_source,
+    create_stream_router,
+)
 from .portfolio import snapshot_loop
-from .routes import chat, portfolio, system, watchlist
+from .routes import chat, market, portfolio, settings, system, watchlist
 from .watchlist import tracked_tickers
 
 logging.basicConfig(level=logging.INFO)
@@ -59,11 +64,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     source = create_market_data_source(cache)
     await source.start(tickers)
     app.state.market_source = source
+    history = create_history_service(db_path, cache)
+    await history.start()
+    app.state.history = history
     snapshots = asyncio.create_task(snapshot_loop(db_path, cache), name="portfolio-snapshots")
 
     yield
 
     snapshots.cancel()
+    await history.stop()
     await source.stop()
 
 
@@ -77,6 +86,8 @@ def create_app() -> FastAPI:
     app.include_router(portfolio.router)
     app.include_router(watchlist.router)
     app.include_router(chat.router)
+    app.include_router(market.router)
+    app.include_router(settings.router)
     app.include_router(system.router)
 
     # Must come last: "/" would otherwise catch the API routes

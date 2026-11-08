@@ -29,6 +29,46 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def ticker_params(ticker: str) -> dict[str, float]:
+    """GBM drift and volatility for a ticker, with defaults for unknown ones."""
+    return dict(TICKER_PARAMS.get(ticker, DEFAULT_PARAMS))
+
+
+def pairwise_correlation(t1: str, t2: str) -> float:
+    """Correlation between two tickers based on sector grouping.
+
+    Correlation structure:
+      - Same tech sector:   0.6
+      - Same finance sector: 0.5
+      - TSLA with anything: 0.3 (it does its own thing)
+      - Cross-sector:       0.3
+      - Unknown tickers:    0.3
+    """
+    tech = CORRELATION_GROUPS["tech"]
+    finance = CORRELATION_GROUPS["finance"]
+
+    # TSLA is in tech set but behaves independently
+    if t1 == "TSLA" or t2 == "TSLA":
+        return TSLA_CORR
+
+    if t1 in tech and t2 in tech:
+        return INTRA_TECH_CORR
+    if t1 in finance and t2 in finance:
+        return INTRA_FINANCE_CORR
+
+    return CROSS_GROUP_CORR
+
+
+def correlation_matrix(tickers: list[str]) -> np.ndarray:
+    """Correlation matrix for the given tickers, in order."""
+    n = len(tickers)
+    corr = np.eye(n)
+    for i in range(n):
+        for j in range(i + 1, n):
+            corr[i, j] = corr[j, i] = pairwise_correlation(tickers[i], tickers[j])
+    return corr
+
+
 class GBMSimulator:
     """Geometric Brownian Motion simulator for correlated stock prices.
 
@@ -158,7 +198,7 @@ class GBMSimulator:
         if price is None:
             price = SEED_PRICES.get(ticker, random.uniform(50.0, 300.0))
         self._prices[ticker] = price
-        self._params[ticker] = TICKER_PARAMS.get(ticker, dict(DEFAULT_PARAMS))
+        self._params[ticker] = ticker_params(ticker)
 
     def _rebuild_cholesky(self) -> None:
         """Rebuild the Cholesky decomposition of the ticker correlation matrix.
@@ -170,40 +210,7 @@ class GBMSimulator:
             self._cholesky = None
             return
 
-        # Build the correlation matrix
-        corr = np.eye(n)
-        for i in range(n):
-            for j in range(i + 1, n):
-                rho = self._pairwise_correlation(self._tickers[i], self._tickers[j])
-                corr[i, j] = rho
-                corr[j, i] = rho
-
-        self._cholesky = np.linalg.cholesky(corr)
-
-    @staticmethod
-    def _pairwise_correlation(t1: str, t2: str) -> float:
-        """Determine correlation between two tickers based on sector grouping.
-
-        Correlation structure:
-          - Same tech sector:   0.6
-          - Same finance sector: 0.5
-          - TSLA with anything: 0.3 (it does its own thing)
-          - Cross-sector:       0.3
-          - Unknown tickers:    0.3
-        """
-        tech = CORRELATION_GROUPS["tech"]
-        finance = CORRELATION_GROUPS["finance"]
-
-        # TSLA is in tech set but behaves independently
-        if t1 == "TSLA" or t2 == "TSLA":
-            return TSLA_CORR
-
-        if t1 in tech and t2 in tech:
-            return INTRA_TECH_CORR
-        if t1 in finance and t2 in finance:
-            return INTRA_FINANCE_CORR
-
-        return CROSS_GROUP_CORR
+        self._cholesky = np.linalg.cholesky(correlation_matrix(self._tickers))
 
 
 class SimulatorDataSource(MarketDataSource):

@@ -4,6 +4,7 @@ import { type FormEvent, useState } from "react";
 import { api } from "@/lib/api";
 import { formatMoney, formatPercent, trendClass } from "@/lib/format";
 import type { PricePoint, PriceUpdate, WatchlistEntry } from "@/lib/types";
+import { useSparklines } from "@/lib/useBars";
 import { useFlash } from "@/lib/useFlash";
 import { Sparkline } from "./Sparkline";
 
@@ -53,14 +54,17 @@ export function WatchlistRow({ entry, update, points, selected, onSelect, onRemo
 interface Props {
   entries: WatchlistEntry[];
   prices: Record<string, PriceUpdate>;
-  history: Record<string, PricePoint[]>;
   selected: string | null;
   onSelect: (ticker: string) => void;
   onChange: () => Promise<void>;
 }
 
-export function Watchlist({ entries, prices, history, selected, onSelect, onChange }: Props) {
+export function Watchlist({ entries, prices, selected, onSelect, onChange }: Props) {
   const [ticker, setTicker] = useState("");
+  const sparklines = useSparklines(
+    entries.map((entry) => entry.ticker),
+    prices,
+  );
   const [error, setError] = useState<string | null>(null);
 
   const run = async (action: Promise<unknown>) => {
@@ -107,7 +111,7 @@ export function Watchlist({ entries, prices, history, selected, onSelect, onChan
             key={entry.ticker}
             entry={entry}
             update={prices[entry.ticker]}
-            points={history[entry.ticker]}
+            points={sparklines[entry.ticker]}
             selected={entry.ticker === selected}
             onSelect={onSelect}
             onRemove={(value) => void run(api.removeTicker(value))}
