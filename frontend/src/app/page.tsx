@@ -26,10 +26,13 @@ export default function Home() {
 
   const onAssistantActions = async (actions: ChatActions) => {
     await refresh();
+    // A prediction outranks a risk lookup: it is what the reply was about
+    const predicted = actions.predictions?.some((call) => call.status === "ok");
     const usedRisk = actions.tool_calls?.some(
       (call) => call.status === "ok" && RISK_LOOKUPS.includes(call.name),
     );
-    if (usedRisk) setViewRequest({ view: "risk", at: Date.now() });
+    if (predicted) setViewRequest({ view: "scorecard", at: Date.now() });
+    else if (usedRisk) setViewRequest({ view: "risk", at: Date.now() });
   };
 
   const selected = picked ?? watchlist[0]?.ticker ?? null;
@@ -72,6 +75,7 @@ export default function Home() {
               positionsKey={positionsKey}
               onSelect={setPicked}
               viewRequest={viewRequest}
+              mode={mode}
             />
             <PnlChart snapshots={snapshots} />
           </div>

@@ -48,6 +48,7 @@ class TestParsing:
             "message": "Hi",
             "trades": [],
             "watchlist_changes": [],
+            "predictions": [],
             "tool_calls": [],
         }
 
@@ -349,3 +350,64 @@ class TestMockTools:
 
     def test_plain_message_uses_no_tools(self, client):
         assert client.post("/api/chat", json={"message": "hello"}).json()["tool_calls"] == []
+
+
+class TestPredictions:
+    def test_recorded_with_the_live_price_and_linked_to_the_reply(self, client):
+        reply = {
+            "message": "I think NVDA rises.",
+            "predictions": [
+                {"ticker": "nvda", "direction": "up", "confidence": 0.65, "horizon_minutes": 60}
+            ],
+        }
+        response, _ = send(client, json.dumps(reply))
+        (call,) = response.json()["predictions"]
+        assert call["status"] == "ok" and call["ticker"] == "NVDA"
+        assert call["reference_price"] > 0 and call["resolves_at"]
+
+        recent = client.get("/api/predictions").json()["predictions"]
+        assert [(p["id"], p["direction"], p["confidence"]) for p in recent] == [
+            (call["id"], "up", 0.65)
+        ]
+        stored = client.get("/api/chat").json()["messages"][-1]
+        assert stored["actions"]["predictions"][0]["id"] == call["id"]
+        with closing(connect(client.app.state.db_path)) as conn:
+            linked = conn.execute(
+                "SELECT c.role FROM predictions p JOIN chat_messages c ON c.id = p.chat_message_id"
+            ).fetchall()
+        assert [row["role"] for row in linked] == ["assistant", "assistant"]  # And its baseline
+
+    def test_bad_calls_are_reported_in_the_reply(self, client):
+        reply = {
+            "message": "Calls.",
+            "predictions": [
+                {"ticker": "NVDA", "direction": "up", "confidence": 65, "horizon_minutes": 60},
+                {"ticker": "PYPL", "direction": "down", "confidence": 0.6, "horizon_minutes": 60},
+            ],
+        }
+        body = send(client, json.dumps(reply))[0].json()
+        assert [p["status"] for p in body["predictions"]] == ["failed", "failed"]
+        assert "Confidence must be between 0.5" in body["message"]
+        assert "PYPL isn't tracked" in body["message"]
+        assert client.get("/api/predictions").json()["predictions"] == []
+
+    def test_prompt_asks_for_honest_scored_predictions(self, client):
+        _, completion = send(client, json.dumps({"message": "Hi"}))
+        system = completion.call_args.kwargs["messages"][0]["content"]
+        assert 'record it in "predictions"' in system
+        assert "never decline" in system
+
+
+class TestMockPredictions:
+    @pytest.fixture(autouse=True)
+    def mock_mode(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("LLM_MOCK", "true")
+
+    def test_predict_commands(self, client):
+        body = client.post(
+            "/api/chat", json={"message": "predict NVDA up and predict AAPL down 75% 30m"}
+        ).json()
+        assert [
+            (p["ticker"], p["direction"], p["confidence"], p["horizon_minutes"], p["status"])
+            for p in body["predictions"]
+        ] == [("NVDA", "up", 0.6, 60, "ok"), ("AAPL", "down", 0.75, 30, "ok")]

@@ -22,7 +22,17 @@ from .market import (
     create_stream_router,
 )
 from .portfolio import snapshot_loop
-from .routes import analytics, chat, market, portfolio, settings, system, watchlist
+from .predictions import resolve_loop
+from .routes import (
+    analytics,
+    chat,
+    market,
+    portfolio,
+    predictions,
+    settings,
+    system,
+    watchlist,
+)
 from .watchlist import tracked_tickers
 
 logging.basicConfig(level=logging.INFO)
@@ -68,10 +78,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await history.start()
     app.state.history = history
     snapshots = asyncio.create_task(snapshot_loop(db_path, cache), name="portfolio-snapshots")
+    resolver = asyncio.create_task(resolve_loop(db_path, cache), name="prediction-resolver")
 
     yield
 
     snapshots.cancel()
+    resolver.cancel()
     await history.stop()
     await source.stop()
 
@@ -88,6 +100,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(market.router)
     app.include_router(analytics.router)
+    app.include_router(predictions.router)
     app.include_router(settings.router)
     app.include_router(system.router)
 

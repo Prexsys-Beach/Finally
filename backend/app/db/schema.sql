@@ -74,3 +74,27 @@ CREATE TABLE IF NOT EXISTS user_settings (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (user_id, key)
 );
+
+-- Directional calls and how they turned out. Each assistant prediction is paired
+-- with a coin-flip baseline on the same ticker and horizon.
+CREATE TABLE IF NOT EXISTS predictions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL DEFAULT 'default',
+    predictor TEXT NOT NULL CHECK (predictor IN ('assistant', 'baseline')),
+    ticker TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('up', 'down')),
+    confidence REAL NOT NULL,
+    horizon_minutes INTEGER NOT NULL,
+    reference_price REAL NOT NULL,
+    data_mode TEXT NOT NULL,
+    made_at TEXT NOT NULL,
+    resolves_at TEXT NOT NULL,
+    resolved_price REAL,
+    outcome TEXT CHECK (outcome IN ('hit', 'miss', 'void')),
+    note TEXT,
+    pair_id TEXT,
+    chat_message_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_predictions_due
+    ON predictions (user_id, outcome, resolves_at);

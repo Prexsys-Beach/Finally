@@ -273,6 +273,16 @@ All tables except `price_bars` include a `user_id` column defaulting to `"defaul
 - `updated_at` TEXT (ISO timestamp)
 - PRIMARY KEY `(user_id, key)`
 
+**predictions** — The prediction journal: the assistant's directional calls and a coin-flip baseline for each
+- `id` TEXT PRIMARY KEY (UUID)
+- `user_id` TEXT (default: `"default"`)
+- `predictor` TEXT (`"assistant"` or `"baseline"`); `pair_id` links each call to its baseline
+- `ticker`, `direction` (`"up"` or `"down"`), `confidence` REAL (0.5 to 1.0), `horizon_minutes` INTEGER
+- `reference_price` REAL (from the price cache when made, never from the model), `data_mode` TEXT
+- `made_at`, `resolves_at` TEXT (ISO timestamps)
+- `resolved_price` REAL, `outcome` TEXT (`"hit"`, `"miss"` or `"void"`), `note` TEXT (why a call is void)
+- `chat_message_id` TEXT (the reply that made it)
+
 **chat_messages** — Conversation history with LLM
 - `id` TEXT PRIMARY KEY (UUID)
 - `user_id` TEXT (default: `"default"`)
@@ -322,6 +332,12 @@ All tables except `price_bars` include a `user_id` column defaulting to `"defaul
 | POST | `/api/chat` | Send a message, receive complete JSON response (message + executed actions) |
 | GET | `/api/chat` | Recent conversation, so the chat panel survives a page refresh |
 
+### Predictions
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/predictions` | Latest assistant predictions, newest first, each with its coin-flip baseline's outcome (`?limit=50`) |
+| GET | `/api/predictions/stats` | Per data mode, for the assistant and the baseline: calls made, settled, hits, hit rate with a 95% interval, Brier score and calibration |
+
 ### System
 | Method | Path | Description |
 |--------|------|-------------|
@@ -344,7 +360,7 @@ When the user sends a chat message, the backend:
 1. Loads the user's current portfolio context (cash, positions with P&L, watchlist with live prices, total portfolio value)
 2. Loads recent conversation history from the `chat_messages` table
 3. Constructs a prompt with a system message, portfolio context, conversation history, and the user's new message
-4. Lets the model look things up: it may call read-only tools (`get_indicators`, `get_bars`, `get_portfolio_risk`, `get_correlations`) for up to `CHAT_MAX_TOOL_ROUNDS` rounds (default 4, within about 45 seconds). Tools never trade; a failed lookup goes back to the model as an error
+4. Lets the model look things up: it may call read-only tools (`get_indicators`, `get_bars`, `get_portfolio_risk`, `get_correlations`, `get_prediction_record`) for up to `CHAT_MAX_TOOL_ROUNDS` rounds (default 4, within about 45 seconds). Tools never trade; a failed lookup goes back to the model as an error
 5. Calls the LLM via LiteLLM → OpenRouter, requesting structured output, using the cerebras-inference skill. This final call has no tools: asked for tools and structured output at once, the model sometimes filled in trades nobody asked for
 6. Parses the complete structured JSON response
 7. Auto-executes any trades or watchlist changes specified in the response
@@ -363,6 +379,9 @@ The LLM is instructed to respond with JSON matching this schema:
   ],
   "watchlist_changes": [
     {"ticker": "PYPL", "action": "add"}
+  ],
+  "predictions": [
+    {"ticker": "NVDA", "direction": "up", "confidence": 0.55, "horizon_minutes": 60}
   ]
 }
 ```
@@ -370,6 +389,7 @@ The LLM is instructed to respond with JSON matching this schema:
 - `message` (required): The conversational text shown to the user
 - `trades` (optional): Array of trades to auto-execute. Each trade goes through the same validation as manual trades (sufficient cash for buys, sufficient shares for sells)
 - `watchlist_changes` (optional): Array of watchlist modifications
+- `predictions` (optional): Directional calls to record in the prediction journal. The model records one whenever it states a view on where a price will go, and gives one when asked. Confidence runs from 0.5 (a coin flip) to 1.0 (certain); on simulated prices it should stay near 0.5 and say the prices are simulated. The backend adds the reference price, data mode and a coin-flip baseline, and a background task settles each call against the recorded price when its horizon passes. A price that didn't move, or wasn't recorded, makes the call void
 
 ### Auto-Execution
 
@@ -392,7 +412,7 @@ The LLM should be prompted as "FinAlly, an AI trading assistant" with instructio
 
 ### LLM Mock Mode
 
-When `LLM_MOCK=true`, the backend returns deterministic mock responses instead of calling OpenRouter. "buy 5 AAPL", "sell 1 MSFT", "add PYPL" and "remove NFLX" act; "analyze NVDA" and any mention of "risk" run the real lookup tools. This enables:
+When `LLM_MOCK=true`, the backend returns deterministic mock responses instead of calling OpenRouter. "buy 5 AAPL", "sell 1 MSFT", "add PYPL" and "remove NFLX" act; "analyze NVDA" and any mention of "risk" run the real lookup tools; "predict NVDA up" records a prediction (add "70%" and "30m" to set confidence and horizon; 60% over 60 minutes otherwise). This enables:
 - Fast, free, reproducible E2E tests
 - Development without an API key
 - CI/CD pipelines
@@ -407,7 +427,7 @@ The frontend is a single-page application with a dense, terminal-inspired layout
 
 - **Watchlist panel** — grid/table of watched tickers with: ticker symbol, current price (flashing green/red on change), daily change %, and a sparkline mini-chart (the last hour of one-minute bars, extended live from SSE)
 - **Main chart area** — larger chart for the currently selected ticker, with ranges: Live (ticks since page load), 1D and 5D (one-minute bars), 1Y (daily bars). History ranges extend live from SSE and are labeled when they include simulated history. Indicator toggles add SMA 20, EMA 50 and Bollinger Bands to the price, and RSI and MACD in panes below. Clicking a ticker in the watchlist selects it here.
-- **Portfolio heatmap** — treemap visualization where each rectangle is a position, sized by portfolio weight, colored by P&L (green = profit, red = loss). The panel toggles to a **Risk** view: volatility, beta, VaR, expected shortfall, concentration, drawdown, Sharpe and a correlation grid
+- **Portfolio heatmap** — treemap visualization where each rectangle is a position, sized by portfolio weight, colored by P&L (green = profit, red = loss). The panel toggles to a **Risk** view (volatility, beta, VaR, expected shortfall, concentration, drawdown, Sharpe and a correlation grid) and a **Scorecard** of the assistant's predictions (hit rate against a coin flip, Brier score, a calibration chart and recent calls, for the current data mode). With the auto-switch setting on, a reply that makes a prediction brings the Scorecard forward, and one that reads portfolio risk brings Risk forward
 - **P&L chart** — line chart showing total portfolio value over time, using data from `portfolio_snapshots`
 - **Positions table** — tabular view of all positions: ticker, quantity, avg cost, current price, unrealized P&L, % change
 - **Trade bar** — simple input area: ticker field, quantity field, buy button, sell button. Market orders, instant fill.

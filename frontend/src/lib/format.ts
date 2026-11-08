@@ -19,3 +19,14 @@ export const formatPercent = (value: number | null) =>
 
 export const trendClass = (value: number | null) =>
   !value || !shown(value) ? "text-muted" : value > 0 ? "text-up" : "text-down";
+
+/** A prediction horizon: "30 min", "2 h", "1.5 h", "3 d". */
+export function formatHorizon(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 1440) {
+    const hours = minutes / 60;
+    return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} h`;
+  }
+  const days = minutes / 1440;
+  return `${Number.isInteger(days) ? days : days.toFixed(1)} d`;
+}

@@ -53,6 +53,7 @@ class TestTools:
             "get_indicators",
             "get_bars",
             "get_portfolio_risk",
+            "get_prediction_record",
             "get_correlations",
         ]
 
@@ -88,6 +89,16 @@ class TestTools:
         everything, _ = call(ctx, "get_correlations")
         assert len(everything["pairs"]) == 3
 
+    def test_prediction_record(self, ctx):
+        from app import predictions
+
+        source = SimpleNamespace(mode="simulated", get_tickers=lambda: ["AAPL"])
+        predictions.record(ctx.conn, ctx.cache, source, "AAPL", "up", 0.8, 60)
+        result, _ = call(ctx, "get_prediction_record")
+        assert result["current_data_mode"] == "simulated"
+        assert result["modes"]["simulated"]["assistant"]["pending"] == 1
+        assert result["latest"][0]["ticker"] == "AAPL" and result["latest"][0]["outcome"] is None
+
     def test_tools_never_write(self, ctx):
         before = ctx.conn.total_changes
         for name, args in [
@@ -95,6 +106,7 @@ class TestTools:
             ("get_bars", {"ticker": "AAPL"}),
             ("get_portfolio_risk", {}),
             ("get_correlations", {}),
+            ("get_prediction_record", {}),
         ]:
             call(ctx, name, **args)
         assert ctx.conn.total_changes == before

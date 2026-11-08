@@ -2,7 +2,7 @@
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import { formatMoney, formatQuantity } from "@/lib/format";
+import { formatHorizon, formatMoney, formatQuantity } from "@/lib/format";
 import type { ChatActions, ChatMessage, ToolCallRecord } from "@/lib/types";
 
 /** A short label for one lookup, e.g. "NVDA indicators (1d)". */
@@ -35,7 +35,14 @@ function describeActions(actions: ChatActions | null): { text: string; failed: b
         ? `${c.action === "add" ? "Added" : "Removed"} ${c.ticker} ${c.action === "add" ? "to" : "from"} watchlist`
         : `Didn't ${c.action} ${c.ticker}`,
   }));
-  return [...changes, ...trades];
+  const calls = (actions.predictions ?? []).map((p) => ({
+    failed: p.status === "failed",
+    text:
+      p.status === "ok"
+        ? `Predicted ${p.ticker} ${p.direction} over ${formatHorizon(p.horizon_minutes)} · ${Math.round(p.confidence * 100)}% confidence`
+        : `Didn't record a prediction for ${p.ticker}`,
+  }));
+  return [...changes, ...trades, ...calls];
 }
 
 export function Message({ message }: { message: ChatMessage }) {
