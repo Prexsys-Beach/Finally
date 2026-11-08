@@ -238,5 +238,7 @@ class TestPollInterval:
     def test_env_var(self, monkeypatch: pytest.MonkeyPatch, value: str, expected: float):
         monkeypatch.setenv("MASSIVE_API_KEY", "test-key")
         monkeypatch.setenv("MASSIVE_POLL_INTERVAL", value)
+        # litellm loads the project .env on import, which may set this to "true".
+        monkeypatch.delenv("MASSIVE_SEED_SIMULATOR", raising=False)
 
         assert create_market_data_source(PriceCache())._interval == expected
