@@ -112,7 +112,11 @@ class GBMSimulator:
             if random.random() < self._event_prob:
                 shock_magnitude = random.uniform(0.02, 0.05)
                 shock_sign = random.choice([-1, 1])
-                self._prices[ticker] *= 1 + shock_magnitude * shock_sign
+                # A drop divides by the factor a rise multiplies by, so equal-sized
+                # moves cancel out. Multiplying by (1 - m) instead would pull prices
+                # down over time: +3% then -3% leaves 99.91.
+                factor = 1 + shock_magnitude
+                self._prices[ticker] *= factor if shock_sign > 0 else 1 / factor
                 logger.debug(
                     "Random event on %s: %.1f%% %s",
                     ticker,
