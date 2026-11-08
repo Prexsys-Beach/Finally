@@ -348,6 +348,10 @@ class TestMockTools:
         ]
         assert body["message"] == "Mock response: request received."
 
+    def test_forecast_runs_the_tool(self, client):
+        body = client.post("/api/chat", json={"message": "forecast my portfolio"}).json()
+        assert [(c["name"], c["status"]) for c in body["tool_calls"]] == [("run_forecast", "ok")]
+
     def test_plain_message_uses_no_tools(self, client):
         assert client.post("/api/chat", json={"message": "hello"}).json()["tool_calls"] == []
 

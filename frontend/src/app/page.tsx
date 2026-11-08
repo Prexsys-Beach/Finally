@@ -77,7 +77,7 @@ export default function Home() {
               viewRequest={viewRequest}
               mode={mode}
             />
-            <PnlChart snapshots={snapshots} />
+            <PnlChart snapshots={snapshots} positionsKey={positionsKey} />
           </div>
           <PositionsTable positions={live?.positions ?? []} selected={selected} onSelect={setPicked} />
         </div>

@@ -1,14 +1,14 @@
-"""Analytics endpoints: indicators per ticker, risk for the portfolio."""
+"""Analytics endpoints: indicators per ticker, portfolio risk, and forecasts."""
 
 from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..analytics import service
 from ..market.bars import Timeframe
-from .deps import Cache, Db, Source, TickerPath
+from .deps import Cache, Db, Source, TickerPath, validate_ticker
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -41,3 +41,32 @@ async def portfolio(
     return service.portfolio_analytics(
         db, cache, timeframe, _retention_days(request), mode=source.mode
     )
+
+
+Horizon = Literal["1h", "1d", "1w"]  # The keys of analytics.forecast.HORIZONS
+
+
+@router.get("/forecast")
+async def forecast(
+    request: Request,
+    db: Db,
+    cache: Cache,
+    source: Source,
+    target: str = "portfolio",
+    horizon: Horizon = "1d",
+    level: Annotated[float | None, Query(gt=0)] = None,
+) -> dict:
+    """Monte Carlo percentile bands for the portfolio's value or a ticker's price."""
+    if target.lower() != "portfolio":
+        try:
+            target = validate_ticker(target)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+    else:
+        target = "portfolio"
+    try:
+        return service.forecast(
+            db, cache, target, horizon, _retention_days(request), mode=source.mode, level=level
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e

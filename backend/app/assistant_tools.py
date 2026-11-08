@@ -28,9 +28,6 @@ MAX_BARS = 120
 INDICATOR_BARS = {"1m": 390, "1d": 252}  # A trading day of minutes; a trading year
 TIMEFRAMES = ("1m", "1d")
 
-# Signals that make the analysis panel worth showing: these read portfolio risk
-RISK_TOOLS = ("get_portfolio_risk", "get_correlations")
-
 
 @dataclass(frozen=True)
 class ToolContext:
@@ -89,6 +86,25 @@ TOOLS = [
         "volatility and beta. Weights include cash.",
         {},
         [],
+    ),
+    _function(
+        "run_forecast",
+        "Monte Carlo forecast of the portfolio's value or a ticker's price over a "
+        "horizon: 5/25/50/75/95th percentile values at the horizon, probability of a "
+        "loss, and optionally the probability of ending beyond or touching a price "
+        "level. No expected return is assumed; the spread comes from measured "
+        "volatility and correlation.",
+        {
+            "target": {"type": "string", "description": '"portfolio" or a ticker symbol'},
+            "horizon": {"type": "string", "enum": ["1h", "1d", "1w"]},
+            "level": {
+                "type": "number",
+                "description": "A price (or portfolio value) to test. Pass it whenever the "
+                "user asks about the chance of reaching or falling to a level: the result "
+                "then gives that probability directly, at the horizon and of touching it.",
+            },
+        },
+        ["target"],
     ),
     _function(
         "get_prediction_record",
@@ -200,6 +216,34 @@ def get_correlations(ctx: ToolContext, tickers: list[str] | None = None) -> dict
     }
 
 
+def run_forecast(
+    ctx: ToolContext, target: str, horizon: str = "1d", level: float | None = None
+) -> dict:
+    if horizon not in ("1h", "1d", "1w"):
+        raise ToolError("horizon must be one of: 1h, 1d, 1w")
+    if level is not None and (
+        not isinstance(level, int | float) or isinstance(level, bool) or level <= 0
+    ):
+        raise ToolError("level must be a positive number")
+    target = "portfolio" if str(target).lower() == "portfolio" else _ticker(target)
+    try:
+        result = analytics.forecast(
+            ctx.conn,
+            ctx.cache,
+            target,
+            horizon,
+            ctx.retention_days,
+            mode=ctx.source.mode,
+            level=level,
+        )
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    # The model gets the end of the fan, not every checkpoint
+    final = {name: values[-1] for name, values in result.pop("bands").items()}
+    del result["times"]
+    return {**result, "at_horizon": final}
+
+
 def get_prediction_record(ctx: ToolContext) -> dict:
     latest = [
         {
@@ -216,6 +260,7 @@ def get_prediction_record(ctx: ToolContext) -> dict:
 
 
 _FUNCTIONS: dict[str, Callable[..., dict]] = {
+    "run_forecast": run_forecast,
     "get_prediction_record": get_prediction_record,
     "get_indicators": get_indicators,
     "get_bars": get_bars,

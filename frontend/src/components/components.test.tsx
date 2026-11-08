@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import type {
+  Forecast,
   HistoryCutoff,
   Portfolio,
   PortfolioAnalytics,
@@ -13,6 +14,7 @@ import type {
 } from "@/lib/types";
 import { useMarket } from "@/lib/useMarket";
 import { ChatPanel, Message } from "./ChatPanel";
+import { forecastSummary } from "./PnlChart";
 import { Header } from "./Header";
 import { AnalysisPanel } from "./AnalysisPanel";
 import { Heatmap, tileColor, tileContent } from "./Heatmap";
@@ -380,12 +382,15 @@ describe("Message", () => {
         lookup("get_bars", { ticker: "AAPL", timeframe: "1m" }),
         lookup("get_portfolio_risk", {}),
         lookup("get_correlations", {}),
+        lookup("get_prediction_record", {}),
+        lookup("run_forecast", { target: "Portfolio", horizon: "1w" }),
+        lookup("run_forecast", { target: "nvda" }),
         lookup("get_indicators", { ticker: "ZZZZ" }, "failed"),
       ],
     };
     render(<ul><Message message={{ role: "assistant", content: "Here you go", actions }} /></ul>);
     expect(screen.getByTestId("chat-lookups")).toHaveTextContent(
-      "Analysis used: NVDA indicators (1d) · AAPL prices (1m) · portfolio risk · correlations · ZZZZ indicators (1d), unavailable",
+      "Analysis used: NVDA indicators (1d) · AAPL prices (1m) · portfolio risk · correlations · prediction record · portfolio forecast (1w) · NVDA forecast (1d) · ZZZZ indicators (1d), unavailable",
     );
   });
 });
@@ -710,5 +715,39 @@ describe("ScorecardView", () => {
     expect(dots).toHaveLength(2);
     expect(dots[0].querySelector("title")?.textContent).toBe("Stated 55%, came true 50% of 6");
     expect(Number(dots[0].getAttribute("r"))).toBeGreaterThan(Number(dots[1].getAttribute("r")));
+  });
+});
+
+describe("forecastSummary", () => {
+  const forecast = (overrides: Partial<Forecast> = {}): Forecast => ({
+    target: "portfolio",
+    horizon: "1d",
+    horizon_label: "1 day",
+    data_mode: "simulated",
+    as_of: 0,
+    current_value: 10000,
+    times: [3600],
+    bands: { p5: [9620.4], p25: [9850], p50: [9990.1], p75: [10150], p95: [10410.9] },
+    probability_of_loss: 0.514,
+    expected_shortfall_5: 480,
+    volatility: 0.2,
+    returns_used: 1999,
+    origins: { synthetic: 1999 },
+    paths: 5000,
+    notes: [],
+    ...overrides,
+  });
+
+  it("gives the 90% range, the median and the chance of a loss", () => {
+    expect(forecastSummary(forecast())).toBe(
+      "1 day: 90% between $9,620.40 and $10,410.90 · median $9,990.10 · 51% chance of a loss",
+    );
+  });
+
+  it("explains a flat forecast instead", () => {
+    const flat = { p5: [10000], p25: [10000], p50: [10000], p75: [10000], p95: [10000] };
+    expect(forecastSummary(forecast({ bands: flat, notes: ["Only cash: the value won't change."] }))).toBe(
+      "Only cash: the value won't change.",
+    );
   });
 });

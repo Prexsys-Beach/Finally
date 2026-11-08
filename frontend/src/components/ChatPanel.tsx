@@ -7,14 +7,19 @@ import type { ChatActions, ChatMessage, ToolCallRecord } from "@/lib/types";
 
 /** A short label for one lookup, e.g. "NVDA indicators (1d)". */
 export function describeLookup(call: ToolCallRecord): string {
-  const ticker = typeof call.arguments.ticker === "string" ? call.arguments.ticker.toUpperCase() : "";
-  const timeframe = typeof call.arguments.timeframe === "string" ? call.arguments.timeframe : "1d";
+  const text = (key: string, fallback: string) =>
+    typeof call.arguments[key] === "string" ? (call.arguments[key] as string) : fallback;
+  const ticker = text("ticker", "").toUpperCase();
+  const timeframe = text("timeframe", "1d");
+  const target = text("target", "portfolio");
   const label =
     {
       get_indicators: `${ticker} indicators (${timeframe})`,
       get_bars: `${ticker} prices (${timeframe})`,
       get_portfolio_risk: "portfolio risk",
       get_correlations: "correlations",
+      get_prediction_record: "prediction record",
+      run_forecast: `${target.toLowerCase() === "portfolio" ? "portfolio" : target.toUpperCase()} forecast (${text("horizon", "1d")})`,
     }[call.name] ?? call.name;
   return call.status === "ok" ? label : `${label}, unavailable`;
 }
