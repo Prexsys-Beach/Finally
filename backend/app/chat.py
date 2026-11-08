@@ -8,11 +8,13 @@ import logging
 import os
 import re
 import sqlite3
+import time
 from typing import Literal
 
 from litellm import completion
 from pydantic import BaseModel, Field, ValidationError
 
+from . import assistant_tools
 from .db import DEFAULT_USER_ID, new_id, utc_now
 from .market import MarketDataSource, PriceCache
 from .portfolio import TradeError, get_portfolio, place_trade
@@ -30,6 +32,8 @@ MODEL = "openrouter/openai/gpt-oss-120b"
 EXTRA_BODY = {"provider": {"order": ["cerebras"]}}
 HISTORY_LIMIT = 20
 LLM_TIMEOUT_SECONDS = 30
+RESEARCH_BUDGET_SECONDS = 45  # Lookups stop here; the final answer still gets its own call
+DEFAULT_TOOL_ROUNDS = 4
 
 SYSTEM_PROMPT = """You are FinAlly, an AI trading assistant inside a simulated trading \
 workstation. All money is virtual.
@@ -40,6 +44,14 @@ workstation. All money is virtual.
 immediately at the current price, with no confirmation step.
 - Manage the watchlist proactively through "watchlist_changes".
 - Only list an action if you intend it to run now. Never list a trade you are merely suggesting.
+- Before making claims about trends, momentum, volatility, correlation or risk, look them \
+up with your tools, and cite the numbers you used. Tools only read data; they never trade.
+- Your reply is final: everything is looked up before you write it. Never say you will \
+fetch or check something next. If a lookup failed or data is missing, say what is missing.
+- Tool results report which bars they used: "synthetic" bars are made-up history, \
+"recorded" and "vendor" bars are real prices. When market_data_mode is "simulated" or \
+"seeded", even recorded prices come from a random simulation, so past patterns don't \
+predict future moves; say so if you discuss direction.
 - Be concise and data-driven. Use the numbers in the context below.
 - Always respond with valid JSON matching the requested schema.
 
@@ -144,6 +156,88 @@ def _call_llm(messages: list[dict]) -> LLMResponse:
         raise ChatError("The assistant is unavailable right now.") from e
 
 
+def _tool_rounds() -> int:
+    raw = os.environ.get("CHAT_MAX_TOOL_ROUNDS", "").strip()
+    try:
+        return max(0, int(raw)) if raw else DEFAULT_TOOL_ROUNDS
+    except ValueError:
+        logger.warning("Ignoring invalid CHAT_MAX_TOOL_ROUNDS: %r", raw)
+        return DEFAULT_TOOL_ROUNDS
+
+
+def _call_with_tools(messages: list[dict]):
+    """One lookup round: the model may call tools. Raises ChatError on failure."""
+    try:
+        response = completion(
+            model=MODEL,
+            messages=messages,
+            tools=assistant_tools.TOOLS,
+            reasoning_effort="low",
+            extra_body=EXTRA_BODY,
+            timeout=LLM_TIMEOUT_SECONDS,
+        )
+        return response.choices[0].message
+    except Exception as e:
+        logger.error("LLM tool round failed: %s", e)
+        raise ChatError("The assistant is unavailable right now.") from e
+
+
+def _assistant_turn(message, calls) -> dict:
+    """The model's tool-calling turn, in the shape the next request needs."""
+    return {
+        "role": "assistant",
+        "content": message.content or "",
+        "tool_calls": [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {"name": call.function.name, "arguments": call.function.arguments},
+            }
+            for call in calls
+        ],
+    }
+
+
+async def _research(messages: list[dict], tools: assistant_tools.ToolContext) -> list[dict]:
+    """Let the model look things up before it answers. Appends the lookups to messages.
+
+    Tool rounds carry no response schema: asked for both at once, the model
+    tended to fill in trades nobody asked for. The answer comes from a separate
+    structured call afterwards. Tools run here, on the request's own thread,
+    because the SQLite connection belongs to it.
+    """
+    records: list[dict] = []
+    deadline = time.monotonic() + RESEARCH_BUDGET_SECONDS
+    for _ in range(_tool_rounds()):
+        if time.monotonic() > deadline:
+            logger.warning("Chat research budget spent; answering with what was found")
+            break
+        message = await asyncio.to_thread(_call_with_tools, messages)
+        calls = getattr(message, "tool_calls", None) or []
+        if not calls:
+            break
+        messages.append(_assistant_turn(message, calls))
+        for call in calls:
+            content, record = assistant_tools.run(
+                tools, call.function.name, call.function.arguments
+            )
+            messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
+            records.append(record)
+    return records
+
+
+def _mock_tools(message: str, tools: assistant_tools.ToolContext) -> list[dict]:
+    """Deterministic lookups for LLM_MOCK=true: 'analyze NVDA' reads its indicators,
+    and any mention of risk reads portfolio risk. The tools really run."""
+    requests = [
+        ("get_indicators", {"ticker": ticker})
+        for ticker in re.findall(r"\banaly[sz]e\s+([A-Za-z.\-]+)", message, re.IGNORECASE)
+    ]
+    if re.search(r"\brisk", message, re.IGNORECASE):
+        requests.append(("get_portfolio_risk", {}))
+    return [assistant_tools.run(tools, name, json.dumps(args))[1] for name, args in requests]
+
+
 def _mock_response(message: str) -> LLMResponse:
     """Deterministic replies for LLM_MOCK=true: 'buy 5 AAPL', 'sell 1 MSFT',
     'add PYPL', 'remove NFLX'. Anything else gets a fixed reply and no actions."""
@@ -155,9 +249,7 @@ def _mock_response(message: str) -> LLMResponse:
     ]
     changes = [
         WatchlistChange(action=action.lower(), ticker=ticker)
-        for action, ticker in re.findall(
-            r"\b(add|remove)\s+([A-Za-z.\-]+)", message, re.IGNORECASE
-        )
+        for action, ticker in re.findall(r"\b(add|remove)\s+([A-Za-z.\-]+)", message, re.IGNORECASE)
     ]
     return LLMResponse(
         message="Mock response: request received.", trades=trades, watchlist_changes=changes
@@ -210,12 +302,15 @@ async def handle_chat(
     cache: PriceCache,
     source: MarketDataSource,
     user_message: str,
+    retention_days: float = 30,
 ) -> dict:
-    """Answer a user message and run any actions the model chose.
+    """Answer a user message: look things up, then run any actions the model chose.
 
     Nothing is stored if the LLM fails, so a retry doesn't duplicate the message.
     """
+    tools = assistant_tools.ToolContext(conn, cache, source, retention_days)
     if os.environ.get("LLM_MOCK", "").strip().lower() == "true":
+        tool_calls = _mock_tools(user_message, tools)
         reply = _mock_response(user_message)
     else:
         system = SYSTEM_PROMPT.format(context=_context(conn, cache, source))
@@ -224,6 +319,7 @@ async def handle_chat(
             *_history(conn),
             {"role": "user", "content": user_message},
         ]
+        tool_calls = await _research(messages, tools)
         reply = await asyncio.to_thread(_call_llm, messages)
 
     # Watchlist first, so "add X and buy it" tracks the ticker before trading
@@ -231,6 +327,7 @@ async def handle_chat(
     trades = [await _apply_trade(conn, cache, source, t) for t in reply.trades]
     message = _with_failures(reply.message, trades, changes)
 
+    actions = {"trades": trades, "watchlist_changes": changes, "tool_calls": tool_calls}
     _store(conn, "user", user_message, None)
-    _store(conn, "assistant", message, {"trades": trades, "watchlist_changes": changes})
-    return {"message": message, "trades": trades, "watchlist_changes": changes}
+    _store(conn, "assistant", message, actions)
+    return {"message": message, **actions}

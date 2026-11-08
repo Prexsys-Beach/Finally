@@ -1,6 +1,8 @@
 """Chat flow: parsing, auto-execution and failure handling, with no real LLM."""
 
 import json
+import time
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -42,7 +44,12 @@ class TestParsing:
     def test_message_only_is_valid(self, client):
         response, _ = send(client, json.dumps({"message": "Hi"}))
         assert response.status_code == 200
-        assert response.json() == {"message": "Hi", "trades": [], "watchlist_changes": []}
+        assert response.json() == {
+            "message": "Hi",
+            "trades": [],
+            "watchlist_changes": [],
+            "tool_calls": [],
+        }
 
     @pytest.mark.parametrize(
         "content", ["not json", "{}", '{"message": "x", "trades": [{"side": "hold"}]}', "", None]
@@ -204,3 +211,141 @@ class TestMockMode:
         assert [t["side"] for t in body["trades"]] == ["buy", "sell"]
         assert [c["action"] for c in body["watchlist_changes"]] == ["add", "remove"]
         assert all(t["status"] == "ok" for t in body["trades"])
+
+
+def tool_call(name: str, arguments: dict, call_id: str = "call-1") -> SimpleNamespace:
+    function = SimpleNamespace(name=name, arguments=json.dumps(arguments))
+    return SimpleNamespace(id=call_id, function=function)
+
+
+def turn(*calls, content=None) -> SimpleNamespace:
+    """A model turn: tool calls, or a plain reply."""
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content, tool_calls=list(calls)))]
+    )
+
+
+def chat_with(client, replies, text="Is NVDA overbought?"):
+    with patch.object(chat, "completion", side_effect=replies) as completion:
+        response = client.post("/api/chat", json={"message": text})
+    return response, completion
+
+
+class TestResearch:
+    def test_looks_up_then_answers_from_a_separate_structured_call(self, client):
+        from app.market.bars import Bar, insert_bars
+
+        start = int(time.time() // 86400 * 86400) - 60 * 86400
+        with closing(connect(client.app.state.db_path)) as conn:
+            insert_bars(
+                conn,
+                [
+                    Bar("NVDA", "1d", start + i * 86400, 800, 810, 790, 800 + i, "synthetic")
+                    for i in range(60)
+                ],
+            )
+        response, completion = chat_with(
+            client,
+            [
+                turn(tool_call("get_indicators", {"ticker": "NVDA"})),
+                turn(content="NVDA looks overbought."),  # Done looking things up
+                llm_reply(json.dumps({"message": "RSI is 78, so NVDA is overbought."})),
+            ],
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["message"] == "RSI is 78, so NVDA is overbought."
+        assert body["tool_calls"] == [
+            {
+                "name": "get_indicators",
+                "arguments": {"ticker": "NVDA"},
+                "status": "ok",
+                "error": None,
+            }
+        ]
+
+        lookup, _, final = completion.call_args_list
+        assert lookup.kwargs["tools"] is chat.assistant_tools.TOOLS
+        assert "response_format" not in lookup.kwargs
+        assert "tools" not in final.kwargs
+        assert final.kwargs["response_format"] is chat.LLMResponse
+        roles = [m["role"] for m in final.kwargs["messages"]]
+        assert roles == ["system", "user", "assistant", "tool"]
+        tool_message = final.kwargs["messages"][-1]
+        assert tool_message["tool_call_id"] == "call-1"
+        assert json.loads(tool_message["content"])["ticker"] == "NVDA"
+        assert final.kwargs["messages"][2]["tool_calls"][0]["function"]["name"] == "get_indicators"
+
+    def test_tool_failures_are_shown_to_the_model_and_recorded(self, client):
+        response, completion = chat_with(
+            client,
+            [
+                turn(tool_call("get_indicators", {"ticker": "ZZZZ"})),
+                turn(),
+                llm_reply(json.dumps({"message": "I have no data for ZZZZ."})),
+            ],
+        )
+        assert response.json()["tool_calls"][0]["status"] == "failed"
+        tool_message = completion.call_args_list[-1].kwargs["messages"][-1]
+        assert json.loads(tool_message["content"]) == {"error": "No price history for ZZZZ."}
+
+    def test_rounds_are_limited(self, client, monkeypatch):
+        monkeypatch.setenv("CHAT_MAX_TOOL_ROUNDS", "2")
+        lookup = turn(tool_call("get_portfolio_risk", {}))
+        response, completion = chat_with(
+            client, [lookup, lookup, llm_reply(json.dumps({"message": "Done."}))]
+        )
+        assert response.status_code == 200
+        assert len(response.json()["tool_calls"]) == 2
+        assert completion.call_count == 3
+
+    def test_zero_rounds_answers_directly(self, client, monkeypatch):
+        monkeypatch.setenv("CHAT_MAX_TOOL_ROUNDS", "0")
+        response, completion = chat_with(client, [llm_reply(json.dumps({"message": "Hi"}))])
+        assert response.status_code == 200 and completion.call_count == 1
+
+    def test_budget_ends_research(self, client, monkeypatch):
+        monkeypatch.setattr(chat, "RESEARCH_BUDGET_SECONDS", -1)
+        response, completion = chat_with(client, [llm_reply(json.dumps({"message": "Hi"}))])
+        assert response.status_code == 200 and completion.call_count == 1
+
+    def test_failed_lookup_round_is_502_and_stores_nothing(self, client):
+        response, _ = chat_with(client, RuntimeError("secret detail"))
+        assert response.status_code == 502 and "secret" not in response.text
+        assert client.get("/api/chat").json()["messages"] == []
+
+    def test_tool_calls_are_stored_with_the_reply(self, client):
+        chat_with(
+            client,
+            [
+                turn(tool_call("get_portfolio_risk", {})),
+                turn(),
+                llm_reply(json.dumps({"message": "Here is your risk."})),
+            ],
+        )
+        stored = client.get("/api/chat").json()["messages"][-1]
+        assert [c["name"] for c in stored["actions"]["tool_calls"]] == ["get_portfolio_risk"]
+
+    def test_prompt_explains_tools_and_simulated_data(self, client):
+        _, completion = chat_with(client, [turn(), llm_reply(json.dumps({"message": "Hi"}))])
+        system = completion.call_args.kwargs["messages"][0]["content"]
+        assert "look them up with your tools" in system
+        assert '"market_data_mode": "simulated"' in system
+        assert "past patterns don't predict future moves" in system
+
+
+class TestMockTools:
+    @pytest.fixture(autouse=True)
+    def mock_mode(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("LLM_MOCK", "true")
+
+    def test_analyze_and_risk_run_real_tools(self, client):
+        body = client.post("/api/chat", json={"message": "analyze NVDA and check my risk"}).json()
+        assert [(c["name"], c["arguments"]) for c in body["tool_calls"]] == [
+            ("get_indicators", {"ticker": "NVDA"}),
+            ("get_portfolio_risk", {}),
+        ]
+        assert body["message"] == "Mock response: request received."
+
+    def test_plain_message_uses_no_tools(self, client):
+        assert client.post("/api/chat", json={"message": "hello"}).json()["tool_calls"] == []

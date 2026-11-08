@@ -35,9 +35,27 @@ def test_stored_value_no_longer_allowed_falls_back(conn):
         "INSERT INTO user_settings (user_id, key, value, updated_at) VALUES (?, ?, ?, ?)",
         ("default", "synthetic_history_cutoff", json.dumps("decade"), "now"),
     )
-    assert get_settings(conn) == {"synthetic_history_cutoff": "month"}
+    assert get_settings(conn)["synthetic_history_cutoff"] == "month"
 
 
 def test_rejects_unknown_keys(conn):
     with pytest.raises(SettingsError, match="Unknown setting"):
         update_settings(conn, {"theme": "dark"})
+
+
+def test_auto_switch_is_a_true_boolean(conn):
+    assert get_settings(conn)["analysis_panel_auto_switch"] is True
+    assert (
+        update_settings(conn, {"analysis_panel_auto_switch": False})["analysis_panel_auto_switch"]
+        is False
+    )
+    for value in (0, 1, "false", None):
+        with pytest.raises(
+            SettingsError, match="analysis_panel_auto_switch must be one of: true, false"
+        ):
+            update_settings(conn, {"analysis_panel_auto_switch": value})
+
+
+def test_cutoff_rejects_lookalikes(conn):
+    with pytest.raises(SettingsError):
+        update_settings(conn, {"synthetic_history_cutoff": True})

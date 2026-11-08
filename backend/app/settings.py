@@ -28,7 +28,14 @@ class Setting:
 
 SETTINGS: dict[str, Setting] = {
     "synthetic_history_cutoff": Setting("month", tuple(SYNTHETIC_CUTOFF_DAYS)),
+    # Bring the matching analysis view forward when an assistant reply uses it
+    "analysis_panel_auto_switch": Setting(True, (True, False)),
 }
+
+
+def _allowed(setting: Setting, value: object) -> bool:
+    """In the choices and of the default's type: JSON 1 is not true, and 0 is not false."""
+    return type(value) is type(setting.default) and value in setting.choices
 
 
 class SettingsError(ValueError):
@@ -42,7 +49,7 @@ def get_settings(conn: sqlite3.Connection) -> dict:
     ).fetchall()
     stored = {row["key"]: json.loads(row["value"]) for row in rows}
     return {
-        key: stored[key] if stored.get(key) in setting.choices else setting.default
+        key: stored[key] if key in stored and _allowed(setting, stored[key]) else setting.default
         for key, setting in SETTINGS.items()
     }
 
@@ -57,8 +64,8 @@ def update_settings(conn: sqlite3.Connection, changes: dict) -> dict:
         setting = SETTINGS.get(key)
         if setting is None:
             raise SettingsError(f"Unknown setting: {key}")
-        if value not in setting.choices:
-            allowed = ", ".join(map(str, setting.choices))
+        if not _allowed(setting, value):
+            allowed = ", ".join(json.dumps(choice) for choice in setting.choices)
             raise SettingsError(f"{key} must be one of: {allowed}")
     now = utc_now()
     with transaction(conn):

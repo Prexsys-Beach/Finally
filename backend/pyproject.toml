@@ -12,6 +12,7 @@ dependencies = [
     "rich>=13.0.0",
     "litellm>=1.108.2",
     "pydantic>=2.12.5",
+    "mcp>=2.3.0",
 ]
 
 [project.optional-dependencies]
