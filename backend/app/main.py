@@ -22,7 +22,7 @@ from .market import (
     create_stream_router,
 )
 from .portfolio import snapshot_loop
-from .routes import chat, market, portfolio, settings, system, watchlist
+from .routes import analytics, chat, market, portfolio, settings, system, watchlist
 from .watchlist import tracked_tickers
 
 logging.basicConfig(level=logging.INFO)
@@ -87,6 +87,7 @@ def create_app() -> FastAPI:
     app.include_router(watchlist.router)
     app.include_router(chat.router)
     app.include_router(market.router)
+    app.include_router(analytics.router)
     app.include_router(settings.router)
     app.include_router(system.router)
 

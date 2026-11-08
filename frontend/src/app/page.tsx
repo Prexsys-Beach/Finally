@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { AnalysisPanel } from "@/components/AnalysisPanel";
 import { ChatPanel } from "@/components/ChatPanel";
 import { Header } from "@/components/Header";
-import { Heatmap } from "@/components/Heatmap";
 import { PnlChart } from "@/components/PnlChart";
 import { PositionsTable } from "@/components/PositionsTable";
 import { PriceChart } from "@/components/PriceChart";
@@ -20,6 +20,7 @@ export default function Home() {
   const [chatOpen, setChatOpen] = useState(true);
 
   const selected = picked ?? watchlist[0]?.ticker ?? null;
+  const positionsKey = (portfolio?.positions ?? []).map((p) => `${p.ticker}:${p.quantity}`).join(",");
   const live = useMemo(
     () => (portfolio ? livePortfolio(portfolio, prices) : null),
     [portfolio, prices],
@@ -53,7 +54,7 @@ export default function Home() {
           </section>
           <TradeBar ticker={selected} onTraded={refresh} />
           <div className="grid min-h-64 flex-[2] grid-cols-1 border-t border-line xl:grid-cols-2">
-            <Heatmap portfolio={live} onSelect={setPicked} />
+            <AnalysisPanel portfolio={live} positionsKey={positionsKey} onSelect={setPicked} />
             <PnlChart snapshots={snapshots} />
           </div>
           <PositionsTable positions={live?.positions ?? []} selected={selected} onSelect={setPicked} />

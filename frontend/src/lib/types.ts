@@ -114,3 +114,71 @@ export interface ChatMessage {
 export interface Health {
   market_data: { mode: DataMode };
 }
+
+export interface IndicatorSeries {
+  time: number[];
+  sma_20: (number | null)[];
+  ema_50: (number | null)[];
+  bollinger_upper: (number | null)[];
+  bollinger_lower: (number | null)[];
+  rsi_14: (number | null)[];
+  macd: (number | null)[];
+  macd_signal: (number | null)[];
+  macd_histogram: (number | null)[];
+}
+
+export interface TickerAnalytics {
+  ticker: string;
+  timeframe: Timeframe;
+  bars: number;
+  origins: Partial<Record<BarOrigin, number>>;
+  latest: Record<string, number | null> | null;
+  signals: Record<string, string | null> | null;
+  series: IndicatorSeries | null;
+}
+
+export interface MoneyFigure {
+  percent: number;
+  amount: number;
+}
+
+export interface TailRisk {
+  level: number;
+  horizon: string;
+  historical: MoneyFigure | null;
+  parametric: MoneyFigure | null;
+}
+
+export interface PositionRisk {
+  ticker: string;
+  weight: number;
+  volatility: number | null;
+  beta: number | null;
+}
+
+export interface PortfolioAnalytics {
+  timeframe: Timeframe;
+  returns: number;
+  as_of: number | null;
+  origins: Partial<Record<BarOrigin, number>>;
+  total_value: number;
+  cash_weight: number | null;
+  benchmark: string;
+  correlation: { tickers: string[]; matrix: (number | null)[][] | null };
+  volatility: number | null;
+  beta: number | null;
+  value_at_risk: TailRisk | null;
+  expected_shortfall: TailRisk | null;
+  positions: PositionRisk[];
+  concentration: {
+    top: { ticker: string; weight: number };
+    herfindahl: number;
+    effective_positions: number;
+  } | null;
+  performance: {
+    max_drawdown: { percent: number; peak_at: string; trough_at: string } | null;
+    sharpe: number | null;
+    note: string | null;
+  };
+  notes: string[];
+}

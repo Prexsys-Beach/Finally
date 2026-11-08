@@ -300,3 +300,41 @@ class TestSettings:
         body = {"synthetic_history_cutoff": "day", "unknown": 1}
         assert client.put("/api/settings", json=body).status_code == 400
         assert client.get("/api/settings").json()["settings"]["synthetic_history_cutoff"] == "month"
+
+
+class TestAnalytics:
+    def test_ticker_indicators(self, client):
+        from contextlib import closing
+
+        from app.db import connect
+        from app.market.bars import Bar, insert_bars
+
+        with closing(connect(client.app.state.db_path)) as conn:
+            insert_bars(
+                conn,
+                [
+                    Bar("AAPL", "1m", 1_700_006_400 + i * 60, 100 + i, 101 + i, 99 + i, 100 + i, "synthetic")
+                    for i in range(80)
+                ],
+            )
+        body = client.get("/api/analytics/ticker/aapl", params={"limit": 30}).json()
+        assert body["ticker"] == "AAPL" and body["timeframe"] == "1m"
+        assert len(body["series"]["time"]) == 30
+        assert body["latest"]["sma_20"] == pytest.approx(169.5)
+
+    def test_portfolio_risk(self, client):
+        body = client.get("/api/analytics/portfolio").json()
+        assert body["timeframe"] == "1d"
+        assert body["benchmark"] == "Equal-weighted watchlist (10 tickers)"
+        assert "correlation" in body and "notes" in body
+
+    @pytest.mark.parametrize(
+        ("path", "params"),
+        [
+            ("/api/analytics/ticker/AAPL", {"timeframe": "5m"}),
+            ("/api/analytics/ticker/AAPL", {"limit": 0}),
+            ("/api/analytics/portfolio", {"timeframe": "1h"}),
+        ],
+    )
+    def test_rejects_bad_parameters(self, client, path, params):
+        assert client.get(path, params=params).status_code == 422

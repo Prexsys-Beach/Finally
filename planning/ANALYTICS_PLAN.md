@@ -98,8 +98,10 @@ class HistoryProvider(ABC):
     origin: Literal["synthetic", "vendor"]
 
     @abstractmethod
-    async def fetch(self, ticker: str, timeframe: str, start: int, end: int) -> list[Bar]: ...
+    async def fetch(self, requests: Sequence[BackfillRequest]) -> list[Bar]: ...
 ```
+
+Each `BackfillRequest` is a ticker, timeframe, `[start, end)` range and an anchor price (built). Requests arrive in a batch so `SyntheticHistory` can generate tickers with the same range together and keep their correlations.
 
 - `SyntheticHistory`: generates past bars with the same per-ticker `mu`/`sigma` and correlation as `GBMSimulator`, using `dt` of one minute (or one day) of trading time. It generates a path and rescales it so the last close equals the ticker's starting price, so history meets the live stream without a jump. Seedable for tests. Default depth: 5 days of `'1m'` and 1 year of `'1d'`.
 - `MassiveHistory`: per-ticker aggregates via the Massive client (`list_aggs`). Depth and rate limits depend on the plan, so it backs off on rate-limit errors like the existing client does.
@@ -134,6 +136,12 @@ class HistoryProvider(ABC):
 - A compact risk view: volatility, beta, VaR, top weight, and a correlation heatmap. It lives in the heatmap panel as a second view (see "Analysis panel views" in Section 7).
 
 **Tests**: each indicator against hand-computed fixtures; edge cases (fewer bars than the window, constant prices, a single position); VaR against a known distribution; no look-ahead (Section 8).
+
+**As built**:
+- Indicator parameters are fixed: SMA 20, EMA 50, Bollinger (20, 2σ), RSI 14, MACD (12, 26, 9), ATR 14. The ticker endpoint also returns simple signals (RSI overbought/oversold, price vs the bands and the SMA, MACD above or below its signal) for the assistant tools in Phase 3.
+- Portfolio risk defaults to daily bars (a trading year of 252), with `?timeframe=1m` for a calendar day of minutes scaled to one trading day by the square root of time. Weights are shares of total value including cash, so cash dampens volatility, beta and VaR. Parametric figures assume zero mean.
+- The Sharpe ratio treats elapsed time as trading time, which matches the simulator; with real data it understates both return and volatility.
+- The panel toggle is **Heatmap · Risk** for now. **Scorecard** arrives with Phase 5, and `analysis_panel_auto_switch` with Phase 3, when assistant messages first use risk tools; a switch with nothing to trigger it would only confuse.
 
 ### Phase 3 — Assistant Tools
 
@@ -284,7 +292,7 @@ API: `GET /api/settings` returns all settings with defaults filled in; `PUT /api
 | Key | Values | Default | Introduced |
 |---|---|---|---|
 | `synthetic_history_cutoff` | `never`, `day`, `week`, `month`, `quarter`, `year` | `month` | Phase 1 |
-| `analysis_panel_auto_switch` | `true`, `false` | `true` | Phase 2 |
+| `analysis_panel_auto_switch` | `true`, `false` | `true` | Phase 3 |
 
 **Synthetic history cutoff** (decided: default one month, user-selectable). Synthetic bars give charts and calculations something to work with before real history exists. Once a ticker has recorded (or vendor) bars covering the chosen span, synthetic bars for that ticker stop being used in forecasts, backtests, risk metrics and prediction stats. They are still drawn on charts, labeled. `never` means synthetic bars are always used.
 

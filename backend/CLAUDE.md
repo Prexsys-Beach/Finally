@@ -71,6 +71,11 @@ Prices can be `None`, for example just after startup, so handle that. Follow the
 | `HISTORY_BACKFILL_DAYS` | 5 | Days of one-minute history to backfill; 0 turns backfill off |
 | `HISTORY_RETENTION_DAYS` | 30 | Days of one-minute bars to keep |
 
+### Analytics
+
+- `app/analytics/indicators.py` and `risk.py` — pure numpy functions. Indicators are causal (no look-ahead; `tests/analytics/test_indicators.py` checks it by truncation) and return NaN through their warm-up
+- `app/analytics/service.py` — `ticker_analytics()` and `portfolio_analytics()`: read bars through `bars_for_analysis()` so the synthetic-history cutoff applies, and report the bar origins they used. Phase 3's assistant tools should call these rather than the math directly
+
 ### SSE Streaming
 
 ```python

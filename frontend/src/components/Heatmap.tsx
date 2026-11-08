@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { formatMoney, formatPercent } from "@/lib/format";
 import { squarify } from "@/lib/treemap";
 import type { Portfolio } from "@/lib/types";
@@ -55,9 +55,14 @@ export function tileColor(percent: number | null): string {
 interface Props {
   portfolio: Portfolio | null;
   onSelect: (ticker: string) => void;
+  heading?: ReactNode;
 }
 
-export function Heatmap({ portfolio, onSelect }: Props) {
+const DEFAULT_HEADING = (
+  <h2 className="px-3 pt-2 pb-1 text-sm font-medium text-muted">Holdings by weight and P&L</h2>
+);
+
+export function Heatmap({ portfolio, onSelect, heading = DEFAULT_HEADING }: Props) {
   const area = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
@@ -81,7 +86,7 @@ export function Heatmap({ portfolio, onSelect }: Props) {
 
   return (
     <section aria-label="Portfolio heatmap" className="flex min-h-56 min-w-0 flex-col">
-      <h2 className="px-3 pt-2 pb-1 text-sm font-medium text-muted">Holdings by weight and P&L</h2>
+      {heading}
       <div ref={area} className="relative mx-3 mb-3 min-h-0 flex-1 overflow-hidden" data-testid="heatmap">
         {tiles.map((tile) => {
           const position = portfolio?.positions.find((p) => p.ticker === tile.id);

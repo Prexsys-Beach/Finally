@@ -4,10 +4,12 @@ import type {
   ChatMessage,
   Health,
   Portfolio,
+  PortfolioAnalytics,
   Settings,
   SettingsResponse,
   Side,
   Snapshot,
+  TickerAnalytics,
   Timeframe,
   Trade,
   WatchlistEntry,
@@ -54,6 +56,12 @@ export const api = {
       `/api/market/bars/${encodeURIComponent(ticker)}?timeframe=${timeframe}&limit=${limit}`,
     ).then((r) => r.bars),
   settings: () => request<SettingsResponse>("/api/settings"),
+  tickerAnalytics: (ticker: string, timeframe: Timeframe, limit: number) =>
+    request<TickerAnalytics>(
+      `/api/analytics/ticker/${encodeURIComponent(ticker)}?timeframe=${timeframe}&limit=${limit}`,
+    ),
+  portfolioAnalytics: (timeframe: Timeframe = "1d") =>
+    request<PortfolioAnalytics>(`/api/analytics/portfolio?timeframe=${timeframe}`),
   updateSettings: (changes: Partial<Settings>) =>
     request<SettingsResponse>("/api/settings", { method: "PUT", body: JSON.stringify(changes) }),
 };

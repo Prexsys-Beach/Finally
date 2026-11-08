@@ -2,11 +2,19 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
-import type { HistoryCutoff, Portfolio, PriceUpdate, WatchlistEntry } from "@/lib/types";
+import type {
+  HistoryCutoff,
+  Portfolio,
+  PortfolioAnalytics,
+  PriceUpdate,
+  WatchlistEntry,
+} from "@/lib/types";
 import { useMarket } from "@/lib/useMarket";
 import { ChatPanel, Message } from "./ChatPanel";
 import { Header } from "./Header";
+import { AnalysisPanel } from "./AnalysisPanel";
 import { Heatmap, tileColor, tileContent } from "./Heatmap";
+import { correlationColor, RiskView } from "./RiskView";
 import { SettingsMenu } from "./SettingsMenu";
 import { PositionsTable } from "./PositionsTable";
 import { TradeBar } from "./TradeBar";
@@ -394,6 +402,109 @@ describe("useMarket", () => {
 
     unmount();
     expect(source.close).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+});
+
+const risk: PortfolioAnalytics = {
+  timeframe: "1d",
+  returns: 252,
+  as_of: 0,
+  origins: { synthetic: 500 },
+  total_value: 10000,
+  cash_weight: 0.25,
+  benchmark: "Equal-weighted watchlist (2 tickers)",
+  correlation: { tickers: ["AAPL", "JPM"], matrix: [[1, 0.42], [0.42, 1]] },
+  volatility: 0.2534,
+  beta: 1.12,
+  value_at_risk: {
+    level: 0.95,
+    horizon: "1 trading day",
+    historical: { percent: 2.5, amount: 250 },
+    parametric: { percent: 2.4, amount: 240 },
+  },
+  expected_shortfall: {
+    level: 0.95,
+    horizon: "1 trading day",
+    historical: { percent: 3.1, amount: 310 },
+    parametric: { percent: 3.0, amount: 300 },
+  },
+  positions: [{ ticker: "AAPL", weight: 0.75, volatility: 0.3, beta: 1.2 }],
+  concentration: { top: { ticker: "AAPL", weight: 0.75 }, herfindahl: 1, effective_positions: 1 },
+  performance: { max_drawdown: { percent: 1.5, peak_at: "", trough_at: "" }, sharpe: null, note: "needs a day" },
+  notes: [],
+};
+
+describe("RiskView", () => {
+  it("shows the figures, the correlation grid and what they were measured on", async () => {
+    vi.spyOn(api, "portfolioAnalytics").mockResolvedValue(risk);
+    render(<RiskView heading={<h2>Risk</h2>} positionsKey="AAPL:1" />);
+    const view = await screen.findByTestId("risk-view");
+    await waitFor(() => expect(view).toHaveTextContent("25.3%"));
+    expect(view).toHaveTextContent("1.12");
+    expect(view).toHaveTextContent("$250.00 · 2.50%");
+    expect(view).toHaveTextContent("normal $240.00");
+    expect(view).toHaveTextContent("AAPL 75.0%");
+    expect(view).toHaveTextContent("cash 25.0%");
+    const cells = screen.getAllByRole("cell", { name: ".4" });
+    expect(cells.map((cell) => cell.title)).toEqual(["AAPL / JPM: 0.42", "JPM / AAPL: 0.42"]);
+    expect(screen.getByTestId("risk-basis")).toHaveTextContent(
+      "252 daily returns, including simulated history.",
+    );
+  });
+
+  it("explains missing figures", async () => {
+    const empty = {
+      ...risk,
+      volatility: null,
+      beta: null,
+      value_at_risk: null,
+      expected_shortfall: null,
+      concentration: null,
+      origins: { recorded: 10 },
+      notes: ["No positions: portfolio risk appears once you hold shares."],
+    };
+    vi.spyOn(api, "portfolioAnalytics").mockResolvedValue(empty);
+    render(<RiskView heading={null} positionsKey="" />);
+    expect(await screen.findByText(/No positions/)).toBeInTheDocument();
+    expect(screen.getByTestId("risk-basis")).not.toHaveTextContent("simulated");
+  });
+
+  it("reloads when positions change", async () => {
+    const load = vi.spyOn(api, "portfolioAnalytics").mockResolvedValue(risk);
+    const { rerender } = render(<RiskView heading={null} positionsKey="" />);
+    rerender(<RiskView heading={null} positionsKey="AAPL:1" />);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+  });
+
+  it("colors correlation on a diverging scale with gray at zero", () => {
+    expect(correlationColor(0)).toContain("0%");
+    expect(correlationColor(0.5)).toContain("#d95926 50%");
+    expect(correlationColor(-1)).toContain("#3987e5 100%");
+    expect(correlationColor(null)).toBe("var(--color-tile-flat)");
+  });
+});
+
+describe("AnalysisPanel", () => {
+  it("switches between the heatmap and risk", async () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(api, "portfolioAnalytics").mockResolvedValue(risk);
+    render(<AnalysisPanel portfolio={portfolio} positionsKey="" onSelect={vi.fn()} />);
+    expect(screen.getByRole("heading")).toHaveTextContent("Holdings by weight and P&L");
+    expect(api.portfolioAnalytics).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Risk" }));
+    expect(screen.getByRole("button", { name: "Risk" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByTestId("risk-view")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Heatmap" }));
+    expect(screen.getByTestId("heatmap")).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 });
