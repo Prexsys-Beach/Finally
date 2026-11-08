@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, Request
 
 from ..analytics import service
 from ..market.bars import Timeframe
-from .deps import Cache, Db, TickerPath
+from .deps import Cache, Db, Source, TickerPath
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -31,7 +31,13 @@ async def ticker(
 
 @router.get("/portfolio")
 async def portfolio(
-    request: Request, db: Db, cache: Cache, timeframe: Literal["1m", "1d"] = "1d"
+    request: Request,
+    db: Db,
+    cache: Cache,
+    source: Source,
+    timeframe: Literal["1m", "1d"] = "1d",
 ) -> dict:
     """Risk of the current positions: volatility, beta, VaR, concentration, correlations."""
-    return service.portfolio_analytics(db, cache, timeframe, _retention_days(request))
+    return service.portfolio_analytics(
+        db, cache, timeframe, _retention_days(request), mode=source.mode
+    )

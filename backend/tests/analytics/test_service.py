@@ -186,3 +186,59 @@ class TestPortfolioAnalytics:
         conn.execute("DELETE FROM portfolio_snapshots WHERE recorded_at > '2026-01-01T05'")
         performance = portfolio_analytics(conn, cache, "1d", 30)["performance"]
         assert performance["sharpe"] is None and "a day" in performance["note"]
+
+
+class TestPerformanceClock:
+    """Sharpe is annualized over the year that matches how prices move in each mode."""
+
+    def snapshots(self, conn, rows):
+        conn.executemany(
+            "INSERT INTO portfolio_snapshots (id, user_id, total_value, recorded_at) "
+            "VALUES (?, 'default', ?, ?)",
+            [(f"s{i}", value, at) for i, (value, at) in enumerate(rows)],
+        )
+
+    def day_of_snapshots(self, conn):
+        self.snapshots(
+            conn,
+            [
+                (
+                    10000 + (i % 7) * 50 + i * 5,
+                    f"2026-01-{1 + i // 24:02d}T{i % 24:02d}:00:00+00:00",
+                )
+                for i in range(48)
+            ],
+        )
+
+    def test_real_data_uses_a_calendar_year(self, conn):
+        self.day_of_snapshots(conn)
+        cache = PriceCache()
+        simulated = portfolio_analytics(conn, cache, "1d", 30, mode="simulated")
+        live = portfolio_analytics(conn, cache, "1d", 30, mode="live")
+        eod = portfolio_analytics(conn, cache, "1d", 30, mode="eod")
+        seeded = portfolio_analytics(conn, cache, "1d", 30, mode="seeded")
+
+        # Sharpe scales with the square root of the year's length
+        ratio = np.sqrt(365.25 * 86400 / (252 * 6.5 * 3600))  # About 2.31
+        sim_sharpe = simulated["performance"]["sharpe"]
+        assert sim_sharpe > 0
+        assert live["performance"]["sharpe"] == pytest.approx(sim_sharpe * ratio, rel=1e-3)
+        assert eod["performance"]["sharpe"] == live["performance"]["sharpe"]
+        assert seeded["performance"]["sharpe"] == sim_sharpe
+
+    def test_drawdown_times_skip_empty_snapshots(self, conn):
+        self.snapshots(
+            conn,
+            [
+                (0, "2026-01-01T00:00:00+00:00"),  # Before any value; left out
+                (100, "2026-01-01T01:00:00+00:00"),
+                (120, "2026-01-01T02:00:00+00:00"),
+                (90, "2026-01-01T03:00:00+00:00"),
+            ],
+        )
+        drawdown = portfolio_analytics(conn, PriceCache(), "1d", 30)["performance"]["max_drawdown"]
+        assert drawdown == {
+            "percent": 25.0,
+            "peak_at": "2026-01-01T02:00:00+00:00",
+            "trough_at": "2026-01-01T03:00:00+00:00",
+        }

@@ -140,7 +140,7 @@ Each `BackfillRequest` is a ticker, timeframe, `[start, end)` range and an ancho
 **As built**:
 - Indicator parameters are fixed: SMA 20, EMA 50, Bollinger (20, 2σ), RSI 14, MACD (12, 26, 9), ATR 14. The ticker endpoint also returns simple signals (RSI overbought/oversold, price vs the bands and the SMA, MACD above or below its signal) for the assistant tools in Phase 3.
 - Portfolio risk defaults to daily bars (a trading year of 252), with `?timeframe=1m` for a calendar day of minutes scaled to one trading day by the square root of time. Weights are shares of total value including cash, so cash dampens volatility, beta and VaR. Parametric figures assume zero mean.
-- The Sharpe ratio treats elapsed time as trading time, which matches the simulator; with real data it understates both return and volatility.
+- The Sharpe ratio is annualized over the year that matches the data: the simulator's trading year (it runs around the clock, so wall-clock time is trading time), or a calendar year for real Massive prices, which only move in market hours.
 - The panel toggle is **Heatmap · Risk** for now. **Scorecard** arrives with Phase 5, and `analysis_panel_auto_switch` with Phase 3, when assistant messages first use risk tools; a switch with nothing to trigger it would only confuse.
 
 ### Phase 3 — Assistant Tools

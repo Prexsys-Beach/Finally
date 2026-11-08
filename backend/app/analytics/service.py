@@ -15,7 +15,7 @@ from datetime import datetime
 import numpy as np
 
 from ..db import DEFAULT_USER_ID
-from ..market import PriceCache
+from ..market import DataMode, PriceCache
 from ..market.bars import Bar, bars_for_analysis
 from ..market.simulator import GBMSimulator
 from ..portfolio import get_portfolio
@@ -30,6 +30,7 @@ MIN_RISK_RETURNS = 20
 MIN_PERFORMANCE_SECONDS = 86400
 MIN_PERFORMANCE_SNAPSHOTS = 30
 RSI_OVERBOUGHT, RSI_OVERSOLD = 70, 30
+CALENDAR_YEAR_SECONDS = 365.25 * 86400
 
 
 def _number(value, digits: int = 6):
@@ -144,25 +145,30 @@ def _figure(fraction: float, total_value: float) -> dict | None:
     return {"percent": round(fraction * 100, 4), "amount": round(fraction * total_value, 2)}
 
 
-def _performance(conn: sqlite3.Connection) -> dict:
-    """Max drawdown and Sharpe ratio from portfolio snapshots.
+# Seconds in the year a Sharpe ratio is annualized over. The simulator runs
+# around the clock, so its wall-clock time is trading time and a year is the
+# trading year it is built on. Real prices only move in market hours: their
+# returns and volatility are measured per wall-clock second, and the matching
+# year is a calendar year, whose nights and weekends add no movement.
+SHARPE_YEAR_SECONDS: dict[DataMode, float] = {
+    "simulated": GBMSimulator.TRADING_SECONDS_PER_YEAR,
+    "seeded": GBMSimulator.TRADING_SECONDS_PER_YEAR,
+    "live": CALENDAR_YEAR_SECONDS,
+    "eod": CALENDAR_YEAR_SECONDS,
+}
 
-    The Sharpe ratio counts elapsed time as trading time, which is how the
-    simulator runs; with real data it understates returns and volatility alike.
-    """
+
+def _performance(conn: sqlite3.Connection, mode: DataMode) -> dict:
+    """Max drawdown and Sharpe ratio from portfolio snapshots."""
     rows = conn.execute(
         """
         SELECT total_value, recorded_at FROM portfolio_snapshots
-        WHERE user_id = ? ORDER BY recorded_at
+        WHERE user_id = ? AND total_value > 0 ORDER BY recorded_at
         """,
         (DEFAULT_USER_ID,),
     ).fetchall()
-    values = [row["total_value"] for row in rows if row["total_value"] > 0]
-    seconds = [
-        datetime.fromisoformat(row["recorded_at"]).timestamp()
-        for row in rows
-        if row["total_value"] > 0
-    ]
+    values = [row["total_value"] for row in rows]
+    seconds = [datetime.fromisoformat(row["recorded_at"]).timestamp() for row in rows]
     if not values:
         return {"max_drawdown": None, "sharpe": None, "note": "No portfolio history yet."}
     drawdown, peak, trough = risk.max_drawdown(values)
@@ -179,13 +185,17 @@ def _performance(conn: sqlite3.Connection) -> dict:
     if span < MIN_PERFORMANCE_SECONDS or len(values) < MIN_PERFORMANCE_SNAPSHOTS:
         result["note"] = "The Sharpe ratio needs at least a day of portfolio history."
         return result
-    sharpe = risk.sharpe_ratio(values, seconds, GBMSimulator.TRADING_SECONDS_PER_YEAR)
+    sharpe = risk.sharpe_ratio(values, seconds, SHARPE_YEAR_SECONDS[mode])
     result["sharpe"] = _number(sharpe, 3)
     return result
 
 
 def portfolio_analytics(
-    conn: sqlite3.Connection, cache: PriceCache, timeframe: str, retention_days: float
+    conn: sqlite3.Connection,
+    cache: PriceCache,
+    timeframe: str,
+    retention_days: float,
+    mode: DataMode = "simulated",
 ) -> dict:
     """Risk of the current positions, measured on the history of held and watched tickers.
 
@@ -235,7 +245,7 @@ def portfolio_analytics(
         "expected_shortfall": None,
         "positions": [],
         "concentration": None,
-        "performance": _performance(conn),
+        "performance": _performance(conn, mode),
         "notes": notes,
     }
 
