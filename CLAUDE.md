@@ -2,7 +2,7 @@
 
 All project documentation is in the `planning` directory.
 
-The key document is PLAN.md included in full below. Consult the other docs only when required: the market data design is summarized in `planning/MARKET_DATA_SUMMARY.md`, with more detail in `planning/archive`.
+The key document is `planning/PLAN.md`, the spec: features, API endpoints, schema, environment variables and the LLM integration. Read the relevant section before changing a feature, and keep it current when you do. For LLM calls, use the cerebras skill (LiteLLM via OpenRouter, `openrouter/openai/gpt-oss-120b` on Cerebras, structured outputs). Consult the other docs only when required: the market data design is summarized in `planning/MARKET_DATA_SUMMARY.md`, with more detail in `planning/archive`.
 
 ## Status
 
@@ -34,5 +34,3 @@ BASE_URL=http://127.0.0.1:8000 npx playwright test
 ```
 
 Delete `/tmp/finally-e2e.db` before each run: `01-fresh-start` expects an untouched database. If the browser download is blocked, set `CHROME_PATH` to an installed Chrome (e.g. `/usr/bin/google-chrome`). If an HTTP proxy is set, add `NO_PROXY=127.0.0.1,localhost`.
-
-@planning/PLAN.md

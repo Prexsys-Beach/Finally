@@ -223,3 +223,9 @@ backend/static/
 test/node_modules/
 test/test-results/
 test/playwright-report/
+
+# macOS folder metadata
+.DS_Store
+
+# Settings backups from /doctor
+*.bak-doctor
