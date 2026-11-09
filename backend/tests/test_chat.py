@@ -352,6 +352,12 @@ class TestMockTools:
         body = client.post("/api/chat", json={"message": "forecast my portfolio"}).json()
         assert [(c["name"], c["status"]) for c in body["tool_calls"]] == [("run_forecast", "ok")]
 
+    def test_backtest_runs_the_tool(self, client):
+        body = client.post("/api/chat", json={"message": "backtest NVDA"}).json()
+        assert [(c["name"], c["arguments"]) for c in body["tool_calls"]] == [
+            ("run_backtest", {"ticker": "NVDA", "strategy": "sma_crossover"})
+        ]
+
     def test_plain_message_uses_no_tools(self, client):
         assert client.post("/api/chat", json={"message": "hello"}).json()["tool_calls"] == []
 

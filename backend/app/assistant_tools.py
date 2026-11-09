@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 
 from . import predictions
 from .analytics import service as analytics
+from .analytics.backtest import STRATEGIES, BacktestError
 from .market import MarketDataSource, PriceCache
 from .market.bars import TIMEFRAME_SECONDS, recent_bars
 from .watchlist import validate_ticker
@@ -105,6 +106,23 @@ TOOLS = [
             },
         },
         ["target"],
+    ),
+    _function(
+        "run_backtest",
+        "Replay a simple long-only strategy on a ticker's stored prices and compare it "
+        "with buy and hold: total and excess return, max drawdown, trades, win rate and "
+        "time invested. A decision at one bar's close trades at the next bar's close. "
+        "Strategies: buy_and_hold; sma_crossover (params fast, slow; default 10, 30): "
+        "invested while the fast average is above the slow; rsi_reversion (params "
+        "period, buy_below, sell_above; default 14, 30, 70).",
+        {
+            "ticker": _TICKER,
+            "strategy": {"type": "string", "enum": list(STRATEGIES)},
+            "params": {"type": "object", "description": "Strategy parameters; omit for defaults"},
+            "timeframe": _TIMEFRAME,
+            "slippage_bps": {"type": "number", "minimum": 0, "maximum": 100},
+        },
+        ["ticker", "strategy"],
     ),
     _function(
         "get_prediction_record",
@@ -244,6 +262,35 @@ def run_forecast(
     return {**result, "at_horizon": final}
 
 
+def run_backtest(
+    ctx: ToolContext,
+    ticker: str,
+    strategy: str,
+    params: dict | None = None,
+    timeframe: str = "1d",
+    slippage_bps: float = 0.0,
+) -> dict:
+    ticker, timeframe = _ticker(ticker), _timeframe(timeframe)
+    if params is not None and not isinstance(params, dict):
+        raise ToolError("params must be an object")
+    if not isinstance(slippage_bps, int | float) or isinstance(slippage_bps, bool):
+        raise ToolError("slippage_bps must be a number")
+    try:
+        result = analytics.backtest(
+            ctx.conn,
+            ticker,
+            strategy,
+            params,
+            timeframe,
+            ctx.retention_days,
+            slippage_bps=float(slippage_bps),
+        )
+    except (BacktestError, ValueError) as e:
+        raise ToolError(str(e)) from e
+    del result["equity_curve"]  # Too long for the model; the figures summarize it
+    return result
+
+
 def get_prediction_record(ctx: ToolContext) -> dict:
     latest = [
         {
@@ -260,6 +307,7 @@ def get_prediction_record(ctx: ToolContext) -> dict:
 
 
 _FUNCTIONS: dict[str, Callable[..., dict]] = {
+    "run_backtest": run_backtest,
     "run_forecast": run_forecast,
     "get_prediction_record": get_prediction_record,
     "get_indicators": get_indicators,

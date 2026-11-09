@@ -54,6 +54,7 @@ class TestTools:
             "get_bars",
             "get_portfolio_risk",
             "run_forecast",
+            "run_backtest",
             "get_prediction_record",
             "get_correlations",
         ]
@@ -120,6 +121,32 @@ class TestTools:
         content, record = tools.run(ctx, "run_forecast", json.dumps(arguments))
         assert error in json.loads(content)["error"] and record["status"] == "failed"
 
+    def test_backtest_summarizes_without_the_curve(self, ctx):
+        result, record = call(ctx, "run_backtest", ticker="AAPL", strategy="rsi_reversion")
+        assert record["status"] == "ok" and result["bars"] == 252
+        assert result["params"] == {"period": 14, "buy_below": 30.0, "sell_above": 70.0}
+        assert "equity_curve" not in result
+        assert {"total_return", "buy_and_hold_return", "max_drawdown", "trades"} <= set(result)
+
+    @pytest.mark.parametrize(
+        ("arguments", "error"),
+        [
+            ({"ticker": "AAPL", "strategy": "momentum"}, "Unknown strategy"),
+            (
+                {"ticker": "AAPL", "strategy": "sma_crossover", "params": {"fast": 9, "slow": 3}},
+                "fast must be shorter",
+            ),
+            (
+                {"ticker": "AAPL", "strategy": "sma_crossover", "params": [1]},
+                "params must be an object",
+            ),
+            ({"ticker": "ZZZZ", "strategy": "buy_and_hold"}, "Not enough price history"),
+        ],
+    )
+    def test_backtest_errors(self, ctx, arguments, error):
+        content, record = tools.run(ctx, "run_backtest", json.dumps(arguments))
+        assert error in json.loads(content)["error"] and record["status"] == "failed"
+
     def test_tools_never_write(self, ctx):
         before = ctx.conn.total_changes
         for name, args in [
@@ -129,6 +156,7 @@ class TestTools:
             ("get_correlations", {}),
             ("get_prediction_record", {}),
             ("run_forecast", {"target": "AAPL"}),
+            ("run_backtest", {"ticker": "AAPL", "strategy": "sma_crossover"}),
         ]:
             call(ctx, name, **args)
         assert ctx.conn.total_changes == before
