@@ -1,19 +1,12 @@
 # Backend — Developer Guide
 
-## Project Setup
-
-```bash
-cd backend
-uv sync --extra dev   # Install all dependencies including test/lint tools
-```
-
 ## Running the Server
 
 ```bash
 uv run --env-file ../.env uvicorn app.main:app --port 8000
 ```
 
-API docs are at `http://localhost:8000/docs`. The database is created and seeded on first start.
+The database is created and seeded on first start.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -36,12 +29,7 @@ Routes are `async` and call SQLite directly on the event loop. Queries are small
 
 ## Market Data API
 
-The market data subsystem lives in `app/market/`. Use these imports:
-
-```python
-from app.market import PriceCache, PriceUpdate, MarketDataSource, DataMode
-from app.market import create_market_data_source, normalize_ticker
-```
+The market data subsystem lives in `app/market/`; import from the package (`app/market/__init__.py`).
 
 ### Core Types
 
@@ -71,17 +59,3 @@ Prices can be `None`, for example just after startup, so handle that. Follow the
 - `app/analytics/forecast.py` — Monte Carlo math: covariance from one-minute returns scaled per second of trading, paths with no expected return, percentile bands. Horizons map to trading time by data mode (the simulator trades around the clock; real markets about 6.5 hours a day)
 - `app/analytics/backtest.py` — long-only strategies (buy and hold, SMA crossover, RSI mean reversion) as functions from closes to 0/1 decisions. A decision at bar t's close trades at bar t+1's close, so nothing looks ahead; zero fees, optional slippage. Add a strategy by adding a function to `STRATEGIES`
 - `app/analytics/service.py` — `ticker_analytics()`, `portfolio_analytics()`, `forecast()` and `backtest()`: read bars through `bars_for_analysis()` so the synthetic-history cutoff applies, and report the bar origins they used. Phase 3's assistant tools should call these rather than the math directly
-
-## Running Tests
-
-```bash
-uv run --extra dev pytest -v              # All tests
-uv run --extra dev pytest --cov=app       # With coverage
-uv run --extra dev ruff check app/ tests/ # Lint
-```
-
-## Demo
-
-```bash
-uv run market_data_demo.py   # Live terminal dashboard with simulated prices
-```
