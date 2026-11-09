@@ -1,12 +1,14 @@
-"""Analytics endpoints: indicators per ticker, portfolio risk, and forecasts."""
+"""Analytics endpoints: indicators, portfolio risk, forecasts and backtests."""
 
 from __future__ import annotations
 
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field, field_validator
 
 from ..analytics import service
+from ..analytics.backtest import STRATEGIES, BacktestError
 from ..market.bars import Timeframe
 from .deps import Cache, Db, Source, TickerPath, validate_ticker
 
@@ -68,5 +70,47 @@ async def forecast(
         return service.forecast(
             db, cache, target, horizon, _retention_days(request), mode=source.mode, level=level
         )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+class BacktestRequest(BaseModel):
+    ticker: str
+    strategy: Literal["buy_and_hold", "sma_crossover", "rsi_reversion"] = "sma_crossover"
+    params: dict = Field(default_factory=dict)
+    timeframe: Timeframe = "1d"
+    start: int | None = Field(default=None, ge=0, description="Unix seconds")
+    end: int | None = Field(default=None, ge=0, description="Unix seconds")
+    slippage_bps: float = Field(default=0.0, ge=0, le=100)
+
+    _normalize = field_validator("ticker")(validate_ticker)
+
+
+@router.get("/backtest/strategies")
+async def strategies() -> dict:
+    """The strategies a backtest can run."""
+    return {"strategies": {key: label for key, (label, _) in STRATEGIES.items()}}
+
+
+@router.post("/backtest")
+async def backtest(request: Request, body: BacktestRequest, db: Db) -> dict:
+    """Replay a strategy on stored bars: returns, drawdown, trades and the equity curve.
+
+    A decision made at one bar's close is carried out at the next bar's close.
+    """
+    try:
+        return service.backtest(
+            db,
+            body.ticker,
+            body.strategy,
+            body.params,
+            body.timeframe,
+            _retention_days(request),
+            start=body.start,
+            end=body.end,
+            slippage_bps=body.slippage_bps,
+        )
+    except BacktestError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e

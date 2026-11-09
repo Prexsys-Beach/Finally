@@ -427,3 +427,76 @@ class TestForecastEndpoint:
     )
     def test_rejects_bad_requests(self, client, params, status):
         assert client.get("/api/analytics/forecast", params=params).status_code == status
+
+
+class TestBacktestEndpoint:
+    def seed(self, client, closes, timeframe="1d"):
+        from contextlib import closing
+
+        from app.db import connect
+        from app.market.bars import Bar, insert_bars
+
+        step = 86400 if timeframe == "1d" else 60
+        start = (
+            (recent_minute() // 86400 - len(closes) - 2) * 86400
+            if timeframe == "1d"
+            else recent_minute()
+        )
+        with closing(connect(client.app.state.db_path)) as conn:
+            insert_bars(
+                conn,
+                [
+                    Bar("ZZZ", timeframe, start + i * step, c, c, c, c, "synthetic")
+                    for i, c in enumerate(closes)
+                ],
+            )
+        return start, step
+
+    def test_runs_a_strategy(self, client):
+        closes = [10.0, 9, 8, 7, 6, 5, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        start, step = self.seed(client, closes)
+        body = client.post(
+            "/api/analytics/backtest",
+            json={"ticker": "zzz", "strategy": "sma_crossover", "params": {"fast": 2, "slow": 4}},
+        ).json()
+        assert body["ticker"] == "ZZZ" and body["strategy_label"] == "SMA crossover"
+        assert body["total_return"] == pytest.approx(12 / 7 - 1, abs=1e-6)
+        assert body["excess_return"] == pytest.approx(12 / 7 - 12 / 9, abs=1e-6)
+        assert body["trades"] == 1 and body["win_rate"] is None and body["open_position"]
+        assert body["from"] == start + step and body["origins"] == {"synthetic": 15}
+        assert body["equity_curve"][-1] == [start + 14 * step, pytest.approx(12 / 7, abs=1e-6)]
+
+    def test_window(self, client):
+        start, step = self.seed(client, [float(v) for v in range(1, 41)])
+        body = client.post(
+            "/api/analytics/backtest",
+            json={
+                "ticker": "ZZZ",
+                "strategy": "buy_and_hold",
+                "start": start + 10 * step,
+                "end": start + 19 * step,
+            },
+        ).json()
+        assert body["bars"] == 10
+        assert body["total_return"] == pytest.approx(20 / 12 - 1, abs=1e-6)
+
+    def test_lists_strategies(self, client):
+        assert client.get("/api/analytics/backtest/strategies").json()["strategies"] == {
+            "buy_and_hold": "Buy and hold",
+            "sma_crossover": "SMA crossover",
+            "rsi_reversion": "RSI mean reversion",
+        }
+
+    @pytest.mark.parametrize(
+        ("body", "status"),
+        [
+            ({"ticker": "ZZZ", "strategy": "momentum"}, 422),
+            ({"ticker": "ZZZ", "slippage_bps": 500}, 422),
+            ({"ticker": "not a ticker"}, 422),
+            ({"ticker": "QQQQ"}, 404),
+            ({"ticker": "ZZZ", "params": {"fast": 50, "slow": 10}}, 400),
+        ],
+    )
+    def test_rejects_bad_requests(self, client, body, status):
+        self.seed(client, [float(v) for v in range(1, 60)])
+        assert client.post("/api/analytics/backtest", json=body).status_code == status

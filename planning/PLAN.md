@@ -311,6 +311,8 @@ All tables except `price_bars` include a `user_id` column defaulting to `"defaul
 |--------|------|-------------|
 | GET | `/api/analytics/ticker/{ticker}` | Indicators over the last `limit` bars (`?timeframe=1m\|1d&limit=500`): series for chart overlays, latest values and signals |
 | GET | `/api/analytics/forecast` | Monte Carlo percentile bands (5/25/50/75/95) for `?target=portfolio` or a ticker over `horizon=1h\|1d\|1w`, with the chance of a loss and, given `level=`, of ending beyond or touching it |
+| POST | `/api/analytics/backtest` | Replay a long-only strategy on a ticker's stored bars: `{ticker, strategy, params, timeframe, start, end, slippage_bps}`. Strategies: `buy_and_hold`, `sma_crossover` (`fast`, `slow`), `rsi_reversion` (`period`, `buy_below`, `sell_above`). Returns total and excess return vs buy and hold, max drawdown, trades, win rate, time invested and the equity curve |
+| GET | `/api/analytics/backtest/strategies` | The strategies a backtest can run |
 | GET | `/api/analytics/portfolio` | Portfolio risk (`?timeframe=1d\|1m`): volatility, beta vs the watchlist, 1-day 95% VaR and expected shortfall, concentration, drawdown, Sharpe, correlation matrix, and the bar origins used |
 
 ### Portfolio
@@ -361,7 +363,7 @@ When the user sends a chat message, the backend:
 1. Loads the user's current portfolio context (cash, positions with P&L, watchlist with live prices, total portfolio value)
 2. Loads recent conversation history from the `chat_messages` table
 3. Constructs a prompt with a system message, portfolio context, conversation history, and the user's new message
-4. Lets the model look things up: it may call read-only tools (`get_indicators`, `get_bars`, `get_portfolio_risk`, `get_correlations`, `run_forecast`, `get_prediction_record`) for up to `CHAT_MAX_TOOL_ROUNDS` rounds (default 4, within about 45 seconds). Tools never trade; a failed lookup goes back to the model as an error
+4. Lets the model look things up: it may call read-only tools (`get_indicators`, `get_bars`, `get_portfolio_risk`, `get_correlations`, `run_forecast`, `run_backtest`, `get_prediction_record`) for up to `CHAT_MAX_TOOL_ROUNDS` rounds (default 4, within about 45 seconds). Tools never trade; a failed lookup goes back to the model as an error
 5. Calls the LLM via LiteLLM → OpenRouter, requesting structured output, using the cerebras-inference skill. This final call has no tools: asked for tools and structured output at once, the model sometimes filled in trades nobody asked for
 6. Parses the complete structured JSON response
 7. Auto-executes any trades or watchlist changes specified in the response
@@ -413,7 +415,7 @@ The LLM should be prompted as "FinAlly, an AI trading assistant" with instructio
 
 ### LLM Mock Mode
 
-When `LLM_MOCK=true`, the backend returns deterministic mock responses instead of calling OpenRouter. "buy 5 AAPL", "sell 1 MSFT", "add PYPL" and "remove NFLX" act; "analyze NVDA" and any mention of "risk" run the real lookup tools; "predict NVDA up" records a prediction (add "70%" and "30m" to set confidence and horizon; 60% over 60 minutes otherwise); "forecast" runs a one-day portfolio forecast. This enables:
+When `LLM_MOCK=true`, the backend returns deterministic mock responses instead of calling OpenRouter. "buy 5 AAPL", "sell 1 MSFT", "add PYPL" and "remove NFLX" act; "analyze NVDA" and any mention of "risk" run the real lookup tools; "predict NVDA up" records a prediction (add "70%" and "30m" to set confidence and horizon; 60% over 60 minutes otherwise); "forecast" runs a one-day portfolio forecast; "backtest NVDA" replays an SMA crossover. This enables:
 - Fast, free, reproducible E2E tests
 - Development without an API key
 - CI/CD pipelines

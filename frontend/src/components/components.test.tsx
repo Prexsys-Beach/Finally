@@ -385,12 +385,13 @@ describe("Message", () => {
         lookup("get_prediction_record", {}),
         lookup("run_forecast", { target: "Portfolio", horizon: "1w" }),
         lookup("run_forecast", { target: "nvda" }),
+        lookup("run_backtest", { ticker: "msft", strategy: "sma_crossover" }),
         lookup("get_indicators", { ticker: "ZZZZ" }, "failed"),
       ],
     };
     render(<ul><Message message={{ role: "assistant", content: "Here you go", actions }} /></ul>);
     expect(screen.getByTestId("chat-lookups")).toHaveTextContent(
-      "Analysis used: NVDA indicators (1d) · AAPL prices (1m) · portfolio risk · correlations · prediction record · portfolio forecast (1w) · NVDA forecast (1d) · ZZZZ indicators (1d), unavailable",
+      "Analysis used: NVDA indicators (1d) · AAPL prices (1m) · portfolio risk · correlations · prediction record · portfolio forecast (1w) · NVDA forecast (1d) · MSFT backtest (SMA crossover) · ZZZZ indicators (1d), unavailable",
     );
   });
 });

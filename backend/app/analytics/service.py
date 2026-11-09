@@ -23,6 +23,7 @@ from ..market.simulator import GBMSimulator
 from ..portfolio import get_portfolio
 from ..settings import synthetic_cutoff_days
 from ..watchlist import get_watchlist
+from . import backtest as bt
 from . import forecast as fc
 from . import indicators as ind
 from . import risk
@@ -417,4 +418,65 @@ def forecast(
         "origins": dict(used),
         "paths": int(values.shape[0]),
         "notes": notes,
+    }
+
+
+# --- Backtests ---
+
+BACKTEST_BARS = {"1m": 1440, "1d": 252}  # A calendar day of minutes; a trading year
+MAX_BACKTEST_BARS = 10000
+
+
+def backtest(
+    conn: sqlite3.Connection,
+    ticker: str,
+    strategy: str,
+    params: dict | None,
+    timeframe: str,
+    retention_days: float,
+    start: int | None = None,
+    end: int | None = None,
+    slippage_bps: float = 0.0,
+) -> dict:
+    """Replay a strategy on a ticker's stored bars, through the synthetic-history cutoff.
+
+    Without start and end it uses the most recent BACKTEST_BARS bars. Raises
+    bt.BacktestError for bad strategies or parameters, ValueError for no history.
+    """
+    windowed = start is not None or end is not None
+    limit = MAX_BACKTEST_BARS if windowed else BACKTEST_BARS[timeframe]
+    bars = _bars(conn, ticker, timeframe, limit, retention_days)
+    if windowed:
+        bars = [
+            b
+            for b in bars
+            if (start is None or b.start_ts >= start) and (end is None or b.start_ts <= end)
+        ]
+    if len(bars) < 3:
+        raise ValueError(f"Not enough price history for {ticker} to backtest.")
+    result = bt.run([b.close for b in bars], strategy, params, slippage_bps)
+    times = [b.start_ts for b in bars[1:]]
+    return {
+        "ticker": ticker,
+        "strategy": strategy,
+        "strategy_label": bt.STRATEGIES[strategy][0],
+        "params": result.params,
+        "timeframe": timeframe,
+        "from": bars[1].start_ts,
+        "to": bars[-1].start_ts,
+        "bars": len(bars),
+        "origins": _origins(bars),
+        "slippage_bps": slippage_bps,
+        "total_return": _number(result.total_return),
+        "buy_and_hold_return": _number(result.buy_and_hold_return),
+        "excess_return": _number(result.total_return - result.buy_and_hold_return),
+        "max_drawdown": _number(result.max_drawdown),
+        "trades": result.trades,
+        "winning_trades": result.winning_trades,
+        "win_rate": _number(result.winning_trades / closed)
+        if (closed := result.trades - int(result.open_position))
+        else None,
+        "open_position": result.open_position,
+        "exposure": _number(result.exposure, 4),
+        "equity_curve": bt.curve(result.equity, times),
     }

@@ -250,8 +250,8 @@ async def _research(messages: list[dict], tools: assistant_tools.ToolContext) ->
 
 def _mock_tools(message: str, tools: assistant_tools.ToolContext) -> list[dict]:
     """Deterministic lookups for LLM_MOCK=true: 'analyze NVDA' reads its indicators,
-    any mention of risk reads portfolio risk, and 'forecast' runs a one-day
-    portfolio forecast. The tools really run."""
+    any mention of risk reads portfolio risk, 'forecast' runs a one-day portfolio
+    forecast, and 'backtest NVDA' replays an SMA crossover. The tools really run."""
     requests = [
         ("get_indicators", {"ticker": ticker})
         for ticker in re.findall(r"\banaly[sz]e\s+([A-Za-z.\-]+)", message, re.IGNORECASE)
@@ -260,6 +260,10 @@ def _mock_tools(message: str, tools: assistant_tools.ToolContext) -> list[dict]:
         requests.append(("get_portfolio_risk", {}))
     if re.search(r"\bforecast", message, re.IGNORECASE):
         requests.append(("run_forecast", {"target": "portfolio", "horizon": "1d"}))
+    requests += [
+        ("run_backtest", {"ticker": ticker, "strategy": "sma_crossover"})
+        for ticker in re.findall(r"\bbacktest\s+([A-Za-z.\-]+)", message, re.IGNORECASE)
+    ]
     return [assistant_tools.run(tools, name, json.dumps(args))[1] for name, args in requests]
 
 

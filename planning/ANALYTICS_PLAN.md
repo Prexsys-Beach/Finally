@@ -274,6 +274,13 @@ The backend fills in the reference price from `PriceCache` and the data mode fro
 
 **Tests**: hand-built price series with known outcomes (e.g. a crossover on a V shape); look-ahead guard; buy-and-hold equals the price change.
 
+**As built**:
+- Defaults: SMA crossover 10/30, RSI mean reversion 14 with 30/70; parameters are validated. Without a window a backtest uses the latest 252 daily or 1,440 one-minute bars, through the synthetic-history cutoff. Results report the bar origins used.
+- Buy and hold is measured from bar 1's close, where the first decision can be carried out, so the buy-and-hold strategy matches the benchmark exactly. Slippage is charged on each change of position.
+- `GET /api/analytics/backtest/strategies` lists the strategies. The `run_backtest` tool returns the figures without the equity curve. There is no equity-curve chart yet; results are presented in chat.
+- Live check (simulated prices): asked how a moving-average crossover would have done on AAPL against holding it, the model ran the default backtest and reported returns, drawdown and win rate with a simulated-data caveat; asked for an RSI rule with 25/75 thresholds, it passed them through; asked which strategy works better on NVDA, it ran both and compared them. No trades or predictions were made.
+- Simulated history can produce dramatic years by chance: one run's AAPL history fell 53%. A check over 400 generated years found the generator unbiased (AAPL's mean log return +1.5%) and a fall that large in about 0.3% of years. Backtests on simulated history only show that the machinery works.
+
 ---
 
 ## 6. API Summary (new)

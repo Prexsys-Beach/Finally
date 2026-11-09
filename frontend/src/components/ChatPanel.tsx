@@ -5,6 +5,12 @@ import { api } from "@/lib/api";
 import { formatHorizon, formatMoney, formatQuantity } from "@/lib/format";
 import type { ChatActions, ChatMessage, ToolCallRecord } from "@/lib/types";
 
+const STRATEGY_NAMES: Record<string, string> = {
+  buy_and_hold: "buy and hold",
+  sma_crossover: "SMA crossover",
+  rsi_reversion: "RSI mean reversion",
+};
+
 /** A short label for one lookup, e.g. "NVDA indicators (1d)". */
 export function describeLookup(call: ToolCallRecord): string {
   const text = (key: string, fallback: string) =>
@@ -20,6 +26,7 @@ export function describeLookup(call: ToolCallRecord): string {
       get_correlations: "correlations",
       get_prediction_record: "prediction record",
       run_forecast: `${target.toLowerCase() === "portfolio" ? "portfolio" : target.toUpperCase()} forecast (${text("horizon", "1d")})`,
+      run_backtest: `${ticker} backtest (${STRATEGY_NAMES[text("strategy", "")] ?? text("strategy", "strategy")})`,
     }[call.name] ?? call.name;
   return call.status === "ok" ? label : `${label}, unavailable`;
 }
