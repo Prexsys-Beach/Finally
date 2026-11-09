@@ -45,15 +45,7 @@ from app.market import create_market_data_source, normalize_ticker
 
 ### Core Types
 
-- **`PriceUpdate`** — Immutable dataclass: `ticker`, `price`, `previous_price`, `timestamp`, `previous_close`, plus properties `change`, `change_percent`, `direction` ("up"/"down"/"flat"), `day_change_percent`, and `to_dict()` for JSON serialization. `change` and `change_percent` are tick-to-tick; use `day_change_percent` for daily change.
-
-- **`PriceCache`** — Thread-safe in-memory store. Key methods:
-  - `update(ticker, price, timestamp=None, previous_close=None) -> PriceUpdate` (`None` keeps the existing `previous_close`)
-  - `get(ticker) -> PriceUpdate | None`
-  - `get_price(ticker) -> float | None`
-  - `get_all() -> dict[str, PriceUpdate]`
-  - `remove(ticker)`
-  - `version` property — monotonic counter, increments on every update (for SSE change detection)
+`PriceUpdate.change` and `change_percent` are tick-to-tick; use `day_change_percent` for daily change.
 
 - **`MarketDataSource`** — Abstract interface implemented by `SimulatorDataSource` and `MassiveDataSource`. Lifecycle: `start(tickers)` -> `add_ticker()` / `remove_ticker()` -> `stop()`. The `mode` property is `"simulated"`, `"live"` or `"eod"`.
 
@@ -79,19 +71,6 @@ Prices can be `None`, for example just after startup, so handle that. Follow the
 - `app/analytics/forecast.py` — Monte Carlo math: covariance from one-minute returns scaled per second of trading, paths with no expected return, percentile bands. Horizons map to trading time by data mode (the simulator trades around the clock; real markets about 6.5 hours a day)
 - `app/analytics/backtest.py` — long-only strategies (buy and hold, SMA crossover, RSI mean reversion) as functions from closes to 0/1 decisions. A decision at bar t's close trades at bar t+1's close, so nothing looks ahead; zero fees, optional slippage. Add a strategy by adding a function to `STRATEGIES`
 - `app/analytics/service.py` — `ticker_analytics()`, `portfolio_analytics()`, `forecast()` and `backtest()`: read bars through `bars_for_analysis()` so the synthetic-history cutoff applies, and report the bar origins they used. Phase 3's assistant tools should call these rather than the math directly
-
-### SSE Streaming
-
-```python
-from app.market import create_stream_router
-
-router = create_stream_router(price_cache)  # Returns FastAPI APIRouter
-# Endpoint: GET /api/stream/prices (text/event-stream)
-```
-
-### Seed Data
-
-Default tickers: AAPL, GOOGL, MSFT, AMZN, TSLA, NVDA, META, JPM, V, NFLX. Seed prices and per-ticker volatility/drift params are in `app/market/seed_prices.py`.
 
 ## Running Tests
 
