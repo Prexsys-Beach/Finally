@@ -9,7 +9,11 @@ Built entirely by coding agents as a capstone project for an agentic AI coding c
 - **Live price streaming** via SSE with green/red flash animations
 - **Simulated portfolio** — $10k virtual cash, market orders, instant fills
 - **Portfolio visualizations** — heatmap (treemap), P&L chart, positions table
-- **AI chat assistant** — analyzes holdings, suggests and auto-executes trades
+- **Price history** — charts open with stored one-minute and daily bars (live, 1D, 5D, 1Y), labeled when they include simulated history
+- **Indicators and risk** — SMA, EMA, Bollinger Bands, RSI and MACD on the chart; a Risk view with volatility, beta, VaR, drawdown, Sharpe and correlations
+- **Forecasts and backtests** — a Monte Carlo fan on the P&L chart; long-only strategies replayed on stored history
+- **AI chat assistant** — looks things up before answering (indicators, risk, forecasts, backtests), analyzes holdings, suggests and auto-executes trades
+- **Prediction journal** — the assistant's directional calls are logged and scored against a coin flip on a Scorecard
 - **Watchlist management** — track tickers manually or via AI
 - **Dark terminal aesthetic** — Bloomberg-inspired, data-dense layout
 
@@ -51,14 +55,19 @@ docker run -v finally-data:/app/db -p 8000:8000 --env-file .env finally
 | `MASSIVE_SEED_SIMULATOR` | No | `true` with a Massive key starts the simulator from real closes |
 | `MASSIVE_POLL_INTERVAL` | No | Seconds between Massive polls; default 15 |
 | `LLM_MOCK` | No | Set `true` for deterministic mock LLM responses (testing) |
+| `HISTORY_BACKFILL_DAYS` | No | Days of one-minute history to backfill; default 5, `0` turns it off |
+| `HISTORY_RETENTION_DAYS` | No | Days of one-minute bars to keep; default 30 |
+| `CHAT_MAX_TOOL_ROUNDS` | No | Lookup rounds the assistant may take before answering; default 4, `0` turns lookups off |
 
 ## Testing
 
 ```bash
-test/run_e2e.sh
+cd backend && uv sync --extra dev && uv run pytest         # backend unit tests
+cd frontend && npm ci && npm test && npm run lint          # frontend unit tests and type check
+test/run_e2e.sh                                            # end-to-end, in Docker
 ```
 
-Runs the Playwright suite in Docker against a throwaway app, with a fresh database and mock LLM replies. It doesn't touch a running app or its data. Failure reports land in `test/playwright-report`.
+The E2E script runs the Playwright suite in Docker against a throwaway app, with a fresh database and mock LLM replies. It doesn't touch a running app or its data. Failure reports land in `test/playwright-report`.
 
 ## Project Structure
 
@@ -66,8 +75,8 @@ Runs the Playwright suite in Docker against a throwaway app, with a fresh databa
 finally/
 ├── frontend/    # Next.js static export
 ├── backend/     # FastAPI uv project
-├── planning/    # Project documentation and agent contracts
-├── test/        # Playwright E2E tests
+├── planning/    # Spec (PLAN.md), analytics plan, market data docs
+├── test/        # Playwright E2E tests and run_e2e.sh
 ├── db/          # SQLite volume mount (runtime)
 └── scripts/     # Start/stop helpers
 ```

@@ -4,7 +4,7 @@ The unified Python API for stock prices in FinAlly. It uses Massive when `MASSIV
 
 **Status:** built in `backend/app/market/`, including the changes listed under "Required Changes". Those changes are kept below as a record of what was fixed and why.
 
-**Evidence:** all 92 backend tests pass on `massive` 2.2.0 and 2.9.1, including `tests/market/test_massive_real_models.py`, which runs the real client with only the HTTP transport faked, and `ruff` passes. `eod` mode was also run live with a real key on 2026-11-06, using `MassiveDataSource` with only the transport routed through a proxy. **`live` mode hasn't been run against real snapshots yet**, because that key has no snapshot access.
+**Evidence:** when this was written, all 92 backend tests passed on `massive` 2.2.0 and 2.9.1 (the market suite now has 163 tests and passes on the locked version), including `tests/market/test_massive_real_models.py`, which runs the real client with only the HTTP transport faked, and `ruff` passes. `eod` mode was also run live with a real key on 2026-11-06, using `MassiveDataSource` with only the transport routed through a proxy. **`live` mode hasn't been run against real snapshots yet**, because that key has no snapshot access.
 
 Related docs: `MASSIVE_API.md` (API facts) and `MARKET_SIMULATOR.md` (the simulator).
 
