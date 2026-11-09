@@ -2,6 +2,8 @@
 
 ## Running the Server
 
+Python 3.12 (pinned in `.python-version`). Lint with `uv run ruff check .`; tests need `uv sync --extra dev`.
+
 ```bash
 uv run --env-file ../.env uvicorn app.main:app --port 8000
 ```
@@ -19,7 +21,7 @@ The database is created and seeded on first start.
 - `app/db/` — schema, connections, `transaction()`, seed data (the package lives here rather than `backend/db/` so it ships in the wheel)
 - `app/portfolio.py` — valuation, trades, snapshots. Use `place_trade()` for every trade, including LLM trades, so validation and ticker tracking stay in one place
 - `app/watchlist.py` — watchlist rules, plus `tracked_tickers()` and `release_ticker()`
-- `app/chat.py` — LLM chat. Lookup rounds with tools first, then a separate structured call for the answer (asking for both at once produced unrequested trades). Auto-executes through `place_trade()` and the watchlist functions. Set `LLM_MOCK=true` for deterministic replies: `buy 5 AAPL`, `sell 1 MSFT`, `add PYPL`, `remove NFLX` act; `analyze NVDA` and any mention of `risk` run real lookups
+- `app/chat.py` — LLM chat. Lookup rounds with tools first, then a separate structured call for the answer (asking for both at once produced unrequested trades). Auto-executes through `place_trade()` and the watchlist functions. `CHAT_MAX_TOOL_ROUNDS` (default 4, 0 turns lookups off) caps the lookup rounds. Set `LLM_MOCK=true` for deterministic replies: `buy 5 AAPL`, `sell 1 MSFT`, `add PYPL`, `remove NFLX` act; `predict NVDA up` records a prediction; `analyze NVDA`, `forecast`, `backtest NVDA` and any mention of `risk` run real lookups
 - `app/predictions.py` — the prediction journal: `record()` (validates, takes the price from the cache, adds a coin-flip baseline), `resolve_due()` (settles against the recorded one-minute bar, or the live price if fresh; otherwise void), `stats()` and `recent()`. `resolve_loop` runs every 30 seconds from the lifespan
 - `app/assistant_tools.py` — the assistant's read-only tools, wrapping the analytics service. Errors go back to the model as `{"error": ...}`, never raised. The `mcp` dependency is there because litellm imports its MCP module whenever a call passes `tools`
 - `app/settings.py` — user settings: allowed values, defaults, storage
@@ -58,4 +60,4 @@ Prices can be `None`, for example just after startup, so handle that. Follow the
 - `app/analytics/indicators.py` and `risk.py` — pure numpy functions. Indicators are causal (no look-ahead; `tests/analytics/test_indicators.py` checks it by truncation) and return NaN through their warm-up
 - `app/analytics/forecast.py` — Monte Carlo math: covariance from one-minute returns scaled per second of trading, paths with no expected return, percentile bands. Horizons map to trading time by data mode (the simulator trades around the clock; real markets about 6.5 hours a day)
 - `app/analytics/backtest.py` — long-only strategies (buy and hold, SMA crossover, RSI mean reversion) as functions from closes to 0/1 decisions. A decision at bar t's close trades at bar t+1's close, so nothing looks ahead; zero fees, optional slippage. Add a strategy by adding a function to `STRATEGIES`
-- `app/analytics/service.py` — `ticker_analytics()`, `portfolio_analytics()`, `forecast()` and `backtest()`: read bars through `bars_for_analysis()` so the synthetic-history cutoff applies, and report the bar origins they used. Phase 3's assistant tools should call these rather than the math directly
+- `app/analytics/service.py` — `ticker_analytics()`, `portfolio_analytics()`, `forecast()` and `backtest()`: read bars through `bars_for_analysis()` so the synthetic-history cutoff applies, and report the bar origins they used. The assistant's tools (`app/assistant_tools.py`) call these rather than the math directly

@@ -6,7 +6,7 @@ The original review missed two defects that stopped Massive working at all, beca
 
 ## What Was Built
 
-A complete market data subsystem in `backend/app/market/` (8 modules) providing live price simulation and real market data via a unified interface.
+A complete market data subsystem in `backend/app/market/` (11 modules, three of them for price history; see `ANALYTICS_PLAN.md`) providing live price simulation and real market data via a unified interface.
 
 ### Architecture
 
@@ -33,8 +33,9 @@ MarketDataSource (ABC)
 | `seed_prices.py` | Realistic seed prices, per-ticker GBM params (drift/volatility), correlation groups |
 | `simulator.py` | `GBMSimulator` (Geometric Brownian Motion with Cholesky-correlated moves) + `SimulatorDataSource` |
 | `massive_client.py` | `MassiveDataSource` — REST poller via the `massive` package: snapshots, or end-of-day closes if the plan has no snapshot access |
-| `factory.py` | `create_market_data_source()` — selects simulator or Massive based on `MASSIVE_API_KEY`; reads `MASSIVE_POLL_INTERVAL` |
+| `factory.py` | `create_market_data_source()` — selects simulator or Massive based on `MASSIVE_API_KEY`; reads `MASSIVE_POLL_INTERVAL` and `MASSIVE_SEED_SIMULATOR`; also `create_history_service()` |
 | `stream.py` | `create_stream_router()` — FastAPI SSE endpoint factory using version-based change detection |
+| `bars.py`, `history.py`, `recorder.py` | Price history: OHLC bars and storage, backfill providers, and the service that records bars from the cache |
 
 ### Key Design Decisions
 
@@ -46,19 +47,21 @@ MarketDataSource (ABC)
 
 ## Test Suite
 
-**92 tests, all passing** on `massive` 2.2.0 and 2.9.1. 7 test modules in `backend/tests/market/`.
+**163 tests, all passing** in 11 modules in `backend/tests/market/` (the backend suite has 427). The original 92, in the first seven modules below, were also run on `massive` 2.2.0 and 2.9.1; the rest were run on the locked version only.
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
 | test_models.py | 11 | models.py: 100% |
 | test_cache.py | 13 | cache.py: 100% |
-| test_simulator.py | 19 | simulator.py: 98% |
+| test_simulator.py | 22 | simulator.py: 98% |
 | test_simulator_source.py | 10 | (integration tests) |
-| test_factory.py | 7 | factory.py: 100% |
+| test_factory.py | 11 | factory.py: 100% |
 | test_massive.py | 13 | massive_client.py: 97% (with the module below) |
 | test_massive_real_models.py | 19 | Real `massive` client and models, with only HTTP faked |
+| test_bars.py, test_history.py, test_recorder.py | 22, 16, 8 | Price bars, backfill providers, the bar recorder |
+| test_seeded_simulator.py | 18 | Simulator seeded from real closes |
 
-Overall coverage: 93%. The main gap is `stream.py` at 33%.
+Coverage was 93% when measured on the first 92 tests; it hasn't been re-measured. The main gap then was `stream.py` at 33%.
 
 ## Code Review & Fixes Applied
 

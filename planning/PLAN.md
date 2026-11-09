@@ -29,6 +29,8 @@ The user runs a single Docker command (or a provided start script). A browser op
 - **View a positions table** — ticker, quantity, average cost, current price, unrealized P&L, % change
 - **Chat with the AI assistant** — ask about their portfolio, get analysis, and have the AI execute trades and manage the watchlist through natural language
 - **Manage the watchlist** — add/remove tickers manually or via the AI chat
+- **Analyze** — indicator overlays on the chart, a portfolio Risk view, Monte Carlo forecasts on the P&L chart, and backtests the assistant can run (see `planning/ANALYTICS_PLAN.md`)
+- **Judge the assistant** — its directional predictions are logged and scored against a coin flip on a Scorecard
 
 ### Visual Design
 
@@ -88,7 +90,7 @@ The user runs a single Docker command (or a provided start script). A browser op
 finally/
 ├── frontend/                 # Next.js TypeScript project (static export)
 ├── backend/                  # FastAPI uv project (Python)
-│   └── db/                   # Schema definitions, seed data, migration logic
+│   └── app/db/               # Schema definitions, seed data, connections
 ├── planning/                 # Project-wide documentation for agents
 │   ├── PLAN.md               # This document
 │   └── ...                   # Additional agent reference docs
@@ -97,12 +99,13 @@ finally/
 │   ├── stop_mac.sh           # Stop Docker container (macOS/Linux)
 │   ├── start_windows.ps1     # Launch Docker container (Windows PowerShell)
 │   └── stop_windows.ps1      # Stop Docker container (Windows PowerShell)
-├── test/                     # Playwright E2E tests + docker-compose.test.yml
+├── test/                     # Playwright E2E tests, docker-compose.test.yml, run_e2e.sh
 ├── db/                       # Volume mount target (SQLite file lives here at runtime)
 │   └── .gitkeep              # Directory exists in repo; finally.db is gitignored
 ├── Dockerfile                # Multi-stage build (Node → Python)
 ├── docker-compose.yml        # Optional convenience wrapper
 ├── .env                      # Environment variables (gitignored, .env.example committed)
+├── .claude/skills/           # Project skills (cerebras, e2e-without-docker)
 └── .gitignore
 ```
 
@@ -110,7 +113,7 @@ finally/
 
 - **`frontend/`** is a self-contained Next.js project. It knows nothing about Python. It talks to the backend via `/api/*` endpoints and `/api/stream/*` SSE endpoints. Internal structure is up to the Frontend Engineer agent.
 - **`backend/`** is a self-contained uv project with its own `pyproject.toml`. It owns all server logic including database initialization, schema, seed data, API routes, SSE streaming, market data, and LLM integration. Internal structure is up to the Backend/Market Data agents.
-- **`backend/db/`** contains schema SQL definitions and seed logic. The backend lazily initializes the database on first request — creating tables and seeding default data if the SQLite file doesn't exist or is empty.
+- **`backend/app/db/`** contains the schema SQL and seed logic (inside the `app` package so it ships in the wheel). The backend initializes the database on startup — creating tables and seeding default data if the SQLite file doesn't exist or is empty.
 - **`db/`** at the top level is the runtime volume mount point. The SQLite file (`db/finally.db`) is created here by the backend and persists across container restarts via Docker volume.
 - **`planning/`** contains project-wide documentation, including this plan. All agents reference files here as the shared contract.
 - **`test/`** contains Playwright E2E tests and supporting infrastructure (e.g., `docker-compose.test.yml`). Unit tests live within `frontend/` and `backend/` respectively, following each framework's conventions.
@@ -154,6 +157,7 @@ CHAT_MAX_TOOL_ROUNDS=
 - If `MASSIVE_API_KEY` is absent or empty → backend uses the built-in market simulator
 - If `LLM_MOCK=true` → backend returns deterministic mock LLM responses (for E2E tests)
 - The backend reads `.env` from the project root (mounted into the container or read via docker `--env-file`)
+- `FINALLY_DB_PATH` (default `db/finally.db` in the project root) and `FINALLY_STATIC_DIR` (default `backend/static`) override where the database lives and where the built frontend is served from. They aren't in `.env.example`; the E2E and no-Docker runs use them
 
 ---
 
@@ -212,7 +216,7 @@ See `planning/MASSIVE_API.md` and `planning/MARKET_INTERFACE.md` for details.
 
 ### SQLite with Lazy Initialization
 
-The backend checks for the SQLite database on startup (or first request). If the file doesn't exist or tables are missing, it creates the schema and seeds default data. This means:
+The backend checks for the SQLite database on startup. If the file doesn't exist or tables are missing, it creates the schema and seeds default data. This means:
 
 - No separate migration step
 - No manual database setup
@@ -288,7 +292,7 @@ All tables except `price_bars` include a `user_id` column defaulting to `"defaul
 - `user_id` TEXT (default: `"default"`)
 - `role` TEXT (`"user"` or `"assistant"`)
 - `content` TEXT
-- `actions` TEXT (JSON — trades executed, watchlist changes made; null for user messages)
+- `actions` TEXT (JSON — `trades`, `watchlist_changes`, `predictions` and `tool_calls` (the lookups used); null for user messages)
 - `created_at` TEXT (ISO timestamp)
 
 ### Default Seed Data
@@ -435,12 +439,12 @@ The frontend is a single-page application with a dense, terminal-inspired layout
 - **Positions table** — tabular view of all positions: ticker, quantity, avg cost, current price, unrealized P&L, % change
 - **Trade bar** — simple input area: ticker field, quantity field, buy button, sell button. Market orders, instant fill.
 - **AI chat panel** — docked/collapsible sidebar. Message input, scrolling conversation history, loading indicator while waiting for LLM response. Trade executions and watchlist changes shown inline as confirmations.
-- **Header** — portfolio total value (updating live), connection status indicator, cash balance
+- **Header** — portfolio total value (updating live), connection status indicator, cash balance, and a settings menu (synthetic-history cutoff, analysis auto-switch)
 
 ### Technical Notes
 
 - Use `EventSource` for SSE connection to `/api/stream/prices`
-- Canvas-based charting library preferred (Lightweight Charts or Recharts) for performance
+- Charts use TradingView Lightweight Charts (canvas) for performance
 - Price flash effect: on receiving a new price, briefly apply a CSS class with background color transition, then remove it
 - All API calls go to the same origin (`/api/*`) — no CORS configuration needed
 - Tailwind CSS for styling with a custom dark theme
@@ -454,15 +458,15 @@ The frontend is a single-page application with a dense, terminal-inspired layout
 ```
 Stage 1: Node 20 slim
   - Copy frontend/
-  - npm install && npm run build (produces static export)
+  - npm ci && npm run build (produces static export)
 
 Stage 2: Python 3.12 slim
   - Install uv
   - Copy backend/
   - uv sync (install Python dependencies from lockfile)
   - Copy frontend build output into a static/ directory
-  - Expose port 8000
-  - CMD: uvicorn serving FastAPI app
+  - Run as a non-root user, expose port 8000, HEALTHCHECK on /api/health
+  - CMD: uvicorn serving FastAPI app (exec form, so docker stop delivers SIGTERM)
 ```
 
 FastAPI serves the static frontend files and all API routes on port 8000.
@@ -480,16 +484,16 @@ The `db/` directory in the project root maps to `/app/db` in the container. The 
 ### Start/Stop Scripts
 
 **`scripts/start_mac.sh`** (macOS/Linux):
-- Builds the Docker image if not already built (or if `--build` flag passed)
-- Runs the container with the volume mount, port mapping, and `.env` file
-- Prints the URL to access the app
-- Optionally opens the browser
+- Starts Docker Desktop if it isn't running, and creates `.env` from `.env.example` if missing
+- Builds the Docker image if not already built (or if `--build` flag passed; this also replaces a running container to load code or `.env` changes)
+- Runs the container with the volume mount, port mapping, and `.env` file, and waits for `/api/health`
+- Prints the URL and opens the browser (`--no-open` to skip)
 
 **`scripts/stop_mac.sh`** (macOS/Linux):
 - Stops and removes the running container
 - Does NOT remove the volume (data persists)
 
-**`scripts/start_windows.ps1`** / **`scripts/stop_windows.ps1`**: PowerShell equivalents for Windows.
+**`scripts/start_windows.ps1`** / **`scripts/stop_windows.ps1`**: PowerShell equivalents for Windows (`-Build`, `-NoOpen`).
 
 All scripts should be idempotent — safe to run multiple times.
 
@@ -509,7 +513,7 @@ The container is designed to deploy to AWS App Runner, Render, or any container 
 - LLM: structured output parsing handles all valid schemas, graceful handling of malformed responses, trade validation within chat flow
 - API routes: correct status codes, response shapes, error handling
 
-**Frontend (React Testing Library or similar)**:
+**Frontend (Vitest with React Testing Library; `npm run lint` is a `tsc --noEmit` type check)**:
 - Component rendering with mock data
 - Price flash animation triggers correctly on price changes
 - Watchlist CRUD operations
@@ -518,7 +522,7 @@ The container is designed to deploy to AWS App Runner, Render, or any container 
 
 ### E2E Tests (in `test/`)
 
-**Infrastructure**: A separate `docker-compose.test.yml` in `test/` that spins up the app container plus a Playwright container. This keeps browser dependencies out of the production image.
+**Infrastructure**: A separate `docker-compose.test.yml` in `test/` that spins up the app container (named `web`, with no published ports or volume) plus a Playwright container. This keeps browser dependencies out of the production image. Run it with `test/run_e2e.sh`. Without Docker, the `e2e-without-docker` skill serves the built frontend from the backend with a throwaway database.
 
 **Environment**: Tests run with `LLM_MOCK=true` by default for speed and determinism.
 
@@ -530,3 +534,9 @@ The container is designed to deploy to AWS App Runner, Render, or any container 
 - Portfolio visualization: heatmap renders with correct colors, P&L chart has data points
 - AI chat (mocked): send a message, receive a response, trade execution appears inline
 - SSE resilience: disconnect and verify reconnection
+- Price history: the chart opens with history, ranges switch, bars are served for every default ticker, the history cutoff setting is saved
+- Analytics: the Risk view after a trade; indicator overlays with RSI and MACD panes
+- Assistant lookups (mocked): the "Analysis used" line, and the Risk view coming forward unless auto-switch is off
+- Prediction journal (mocked): a prediction is recorded, shown in chat and on the Scorecard; the stats API
+- Forecasts: the P&L fan for a chosen horizon; the assistant running a forecast
+- Backtests: the assistant running one; the API replaying a strategy on stored history

@@ -1,5 +1,7 @@
 # Analytics & Prediction Extension Plan
 
+**Status:** all six phases are built. This document is the design record; `PLAN.md` is the current spec. The "Current State" table in Section 2 describes the app before the work began.
+
 ## 1. Goal
 
 Make the assistant better at analysis and prediction, in a form that can be tested now on the simulator and later fed with purchased market data, without changes to the tools.
@@ -141,7 +143,7 @@ Each `BackfillRequest` is a ticker, timeframe, `[start, end)` range and an ancho
 - Indicator parameters are fixed: SMA 20, EMA 50, Bollinger (20, 2σ), RSI 14, MACD (12, 26, 9), ATR 14. The ticker endpoint also returns simple signals (RSI overbought/oversold, price vs the bands and the SMA, MACD above or below its signal) for the assistant tools in Phase 3.
 - Portfolio risk defaults to daily bars (a trading year of 252), with `?timeframe=1m` for a calendar day of minutes scaled to one trading day by the square root of time. Weights are shares of total value including cash, so cash dampens volatility, beta and VaR. Parametric figures assume zero mean.
 - The Sharpe ratio is annualized over the year that matches the data: the simulator's trading year (it runs around the clock, so wall-clock time is trading time), or a calendar year for real Massive prices, which only move in market hours.
-- The panel toggle is **Heatmap · Risk** for now. **Scorecard** arrives with Phase 5, and `analysis_panel_auto_switch` with Phase 3, when assistant messages first use risk tools; a switch with nothing to trigger it would only confuse.
+- The panel toggle was **Heatmap · Risk** at this point; **Scorecard** arrived with Phase 5, and `analysis_panel_auto_switch` with Phase 3, when assistant messages first used risk tools.
 
 ### Phase 3 — Assistant Tools
 
@@ -155,9 +157,9 @@ Replace the single structured call in `handle_chat` with a short tool-calling lo
 | `get_indicators(ticker, timeframe)` | Latest indicator values and simple signals (e.g. RSI > 70) |
 | `get_portfolio_risk()` | Phase 2 risk metrics |
 | `get_correlations(tickers)` | Correlation submatrix |
-| `run_forecast(target, horizon)` | Phase 4 percentile bands (once Phase 4 lands) |
-| `run_backtest(ticker, strategy, params)` | Phase 6 summary (once Phase 6 lands) |
-| `get_prediction_record()` | Phase 5 hit rate and calibration (once Phase 5 lands) |
+| `run_forecast(target, horizon)` | Phase 4 percentile bands |
+| `run_backtest(ticker, strategy, params)` | Phase 6 summary |
+| `get_prediction_record()` | Phase 5 hit rate and calibration |
 
 **Loop**:
 1. Send the system prompt, context, history and tools.
@@ -179,7 +181,7 @@ The total time budget stays bounded: a per-call timeout plus an overall limit (a
 
 **As built**:
 - The spike confirmed tool calling and structured output both work for `gpt-oss-120b` on Cerebras. Combined in one call, though, the model filled in unrequested trades in 2 of 4 runs (for example "sell 10 NVDA" when only asked whether NVDA was overbought); with lookups first and a separate structured call, 0 of 4. The loop uses the separate call. It costs one extra call of about a second.
-- Tools so far: `get_indicators`, `get_bars`, `get_portfolio_risk`, `get_correlations`. `run_forecast`, `run_backtest` and `get_prediction_record` arrive with their phases.
+- Tools at this phase: `get_indicators`, `get_bars`, `get_portfolio_risk`, `get_correlations`. `run_forecast`, `run_backtest` and `get_prediction_record` arrived with their phases.
 - litellm imports its MCP module whenever a call passes `tools`, which needs the `mcp` package; it is a dependency for that reason.
 - `analysis_panel_auto_switch` (default on) arrived here: replies that used `get_portfolio_risk` or `get_correlations` bring the Risk view forward. Toggled from an "Auto" button on the panel or the settings menu.
 - Live check through the app (simulated prices): "Is NVDA overbought?" looked up indicators and answered with RSI, SMA and bands; "How risky is my portfolio?" used both risk tools and cited volatility, beta, concentration and correlations; unrelated questions used no tools. Replies took 0.5-3 seconds.
