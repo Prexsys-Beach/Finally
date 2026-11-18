@@ -23,7 +23,8 @@ function Test-Health {
 }
 
 function Test-Running {
-    $state = (& docker inspect -f "{{.State.Running}}" $Container 2>$null)
+    $state = $null
+try { $state = (& docker container inspect -f "{{.State.Running}}" $Container 2>$null) } catch { }
     return $state -eq "true"
 }
 
